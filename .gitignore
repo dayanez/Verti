@@ -1,0 +1,6 @@
+/verti
+/verti.exe
+*.exe
+*.test
+/bin/
+/dist/
