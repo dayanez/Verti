@@ -6,13 +6,13 @@ package app
 const globalToggleTerminalChord = "ctrl+@"
 
 // globalKeymap holds chords that work the same regardless of which pane
-// has focus — VS Code's model of "global" commands. Focus-specific keys
+// has focus, VS Code's model of "global" commands. Focus-specific keys
 // (arrows, Enter, Tab, typed characters, ...) are handled directly by
 // each pane's key handler instead of going through this table.
 //
 // Ctrl+` (backtick) is bound as "ctrl+@": bubbletea's key parser reports
 // Ctrl+Backtick using the same code as Ctrl+@ (they both send the NUL
-// control byte over the wire — see charmbracelet/bubbletea's key.go,
+// control byte over the wire, see charmbracelet/bubbletea's key.go,
 // which documents this explicitly), so binding "ctrl+@" is what actually
 // catches Ctrl+`. If your terminal sends something else for that chord,
 // override it from init.lua with verti.keymap("ctrl+@", "toggle_terminal").
@@ -43,4 +43,15 @@ var globalKeymap = map[string]string{
 	// init.lua with verti.keymap("ctrl+_", "toggle_comment") if yours
 	// differs.
 	"ctrl+_": "toggle_comment",
+	"ctrl+n": "new_tab",
+	"ctrl+w": "close_tab",
+	// Ctrl+PgUp/PgDown for tab switching follows the browser convention
+	// (Firefox, Chrome) rather than Ctrl+Tab: many terminal emulators and
+	// multiplexers already intercept Ctrl+Tab for their own tab switching,
+	// so it would often never reach verti at all.
+	"ctrl+pgup":   "prev_tab",
+	"ctrl+pgdown": "next_tab",
+	// Find-in-files uses Ctrl+T rather than VS Code's Ctrl+Shift+F, for
+	// the same Ctrl+Shift+<letter> reliability reason as Ctrl+O above.
+	"ctrl+t": "find_in_files",
 }

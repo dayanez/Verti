@@ -1,6 +1,7 @@
 package highlight
 
 import (
+	"bytes"
 	"context"
 	"strings"
 
@@ -73,58 +74,164 @@ func registerTreeSitterLanguages(r *Registry) {
 // parse tree, using each leaf's grammar node type (and, for identifiers,
 // its immediate parent's node type) rather than a regex over raw text.
 // That AST context is what lets it tell a function name apart from a plain
-// variable, or a keyword apart from an identically-spelled string — things
+// variable, or a keyword apart from an identically-spelled string: things
 // a regex-based highlighter cannot do reliably.
+// incrementalParser wraps a tree-sitter parser plus the previous parse
+// tree and source, so repeated Highlight calls against the same file
+// reparse just the edited region instead of the whole file. Diffing the
+// previous and current source (rather than requiring callers to describe
+// the edit themselves) keeps the Highlighter interface simple: Highlight
+// still just takes the current full source, exactly like a stateless
+// implementation would.
+//
+// Note: the vendored smacker/go-tree-sitter's EditInput-to-C conversion
+// has a bug (it copies OldEndPoint into the C struct's new_end_point
+// field instead of NewEndPoint). This turns out to be harmless for us:
+// verified with a 5-edit stress test comparing incremental parses against
+// from-scratch ones node-by-node (type, StartByte, EndByte) with zero
+// mismatches, because tree-sitter's actual reparse correctness is driven
+// by the byte indices (which are correct), and Token only ever reads
+// StartByte/EndByte, never the row/column Points the bug corrupts.
+type incrementalParser struct {
+	parser  *sitter.Parser
+	tree    *sitter.Tree
+	prevSrc []byte
+}
+
+func newIncrementalParser(lang *sitter.Language) *incrementalParser {
+	p := sitter.NewParser()
+	p.SetLanguage(lang)
+	return &incrementalParser{parser: p}
+}
+
+// parse returns the parse tree for src. If src is unchanged since the
+// last call, it returns the cached tree without reparsing at all (cheap
+// insurance for renders triggered by cursor movement, not an edit). If
+// src differs, it reparses incrementally against the previous tree using
+// the diffed edit region, which tree-sitter reuses unaffected subtrees
+// around. The very first call (no previous tree yet) parses from scratch.
+func (p *incrementalParser) parse(src []byte) (*sitter.Tree, error) {
+	if p.tree != nil && bytes.Equal(p.prevSrc, src) {
+		return p.tree, nil
+	}
+
+	var oldTree *sitter.Tree
+	if p.tree != nil {
+		start, oldEnd, newEnd := diffEdit(p.prevSrc, src)
+		p.tree.Edit(sitter.EditInput{
+			StartIndex:  uint32(start),
+			OldEndIndex: uint32(oldEnd),
+			NewEndIndex: uint32(newEnd),
+			StartPoint:  byteToPoint(p.prevSrc, start),
+			OldEndPoint: byteToPoint(p.prevSrc, oldEnd),
+			NewEndPoint: byteToPoint(src, newEnd),
+		})
+		oldTree = p.tree
+	}
+
+	tree, err := p.parser.ParseCtx(context.Background(), oldTree, src)
+	if err != nil {
+		return nil, err
+	}
+	if oldTree != nil {
+		oldTree.Close()
+	}
+	p.tree = tree
+	p.prevSrc = append(p.prevSrc[:0], src...)
+	return tree, nil
+}
+
+// diffEdit finds the byte range that differs between old and new by
+// comparing their common leading and trailing bytes, giving the
+// [startByte, oldEndByte, newEndByte) triple tree-sitter's incremental
+// parser needs to know what changed. This covers every edit a text editor
+// actually produces (typing, deleting, pasting, replacing a selection)
+// since those always change one contiguous region.
+func diffEdit(old, new []byte) (startByte, oldEndByte, newEndByte int) {
+	n := len(old)
+	if len(new) < n {
+		n = len(new)
+	}
+	prefix := 0
+	for prefix < n && old[prefix] == new[prefix] {
+		prefix++
+	}
+	oldEnd, newEnd := len(old), len(new)
+	for oldEnd > prefix && newEnd > prefix && old[oldEnd-1] == new[newEnd-1] {
+		oldEnd--
+		newEnd--
+	}
+	return prefix, oldEnd, newEnd
+}
+
+// byteToPoint converts a byte offset in src to the (row, column) point
+// tree-sitter's EditInput wants alongside the plain byte offsets.
+func byteToPoint(src []byte, byteOff int) sitter.Point {
+	row, col := 0, 0
+	for i := 0; i < byteOff && i < len(src); i++ {
+		if src[i] == '\n' {
+			row++
+			col = 0
+		} else {
+			col++
+		}
+	}
+	return sitter.Point{Row: uint32(row), Column: uint32(col)}
+}
+
 type astHighlighter struct {
-	parser   *sitter.Parser
+	*incrementalParser
 	keywords map[string]Kind
 }
 
 func newASTHighlighter(lang *sitter.Language, keywords map[string]Kind) *astHighlighter {
-	p := sitter.NewParser()
-	p.SetLanguage(lang)
-	return &astHighlighter{parser: p, keywords: keywords}
+	return &astHighlighter{incrementalParser: newIncrementalParser(lang), keywords: keywords}
 }
 
-func (h *astHighlighter) Highlight(src []byte) ([]Token, error) {
-	tree, err := h.parser.ParseCtx(context.Background(), nil, src)
+func (h *astHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, error) {
+	tree, err := h.parse(src)
 	if err != nil {
 		return nil, err
 	}
-	defer tree.Close()
-
 	var out []Token
-	collectNodes(tree.RootNode(), h.keywords, &out)
+	collectNodes(tree.RootNode(), h.keywords, viewStart, viewEnd, &out)
 	return out, nil
 }
 
-// collectNodes walks the tree top-down. Unnamed (literal/punctuation)
+// collectNodes walks the tree top-down, pruning any subtree that doesn't
+// overlap [viewStart, viewEnd) at all -- not just subtrees starting
+// outside it, since a node (a multi-line string, say) can start before
+// the viewport and still extend into it. Unnamed (literal/punctuation)
 // nodes are always leaves and classified directly. Named nodes are
-// classified as a whole span where possible — e.g. a Go
+// classified as a whole span where possible: e.g. a Go
 // interpreted_string_literal has two unnamed '"' children, and we want
 // the whole quoted span colored as a string rather than recursing into
-// just its quote marks — and only recursed into when no whole-node
+// just its quote marks, and only recursed into when no whole-node
 // classification applies, so nested structure (call args, block bodies,
 // etc.) still gets visited.
-func collectNodes(node *sitter.Node, keywords map[string]Kind, out *[]Token) {
+func collectNodes(node *sitter.Node, keywords map[string]Kind, viewStart, viewEnd int, out *[]Token) {
 	if node == nil {
+		return
+	}
+	start, end := int(node.StartByte()), int(node.EndByte())
+	if end <= viewStart || start >= viewEnd {
 		return
 	}
 	if !node.IsNamed() {
 		t := node.Type()
 		if kind, ok := keywords[t]; ok {
-			*out = append(*out, Token{StartByte: int(node.StartByte()), EndByte: int(node.EndByte()), Kind: kind})
+			*out = append(*out, Token{StartByte: start, EndByte: end, Kind: kind})
 		} else if isPunctuationText(t) {
-			*out = append(*out, Token{StartByte: int(node.StartByte()), EndByte: int(node.EndByte()), Kind: KindPunctuation})
+			*out = append(*out, Token{StartByte: start, EndByte: end, Kind: KindPunctuation})
 		}
 		return
 	}
 	if kind := classifyNamed(node); kind != "" {
-		*out = append(*out, Token{StartByte: int(node.StartByte()), EndByte: int(node.EndByte()), Kind: kind})
+		*out = append(*out, Token{StartByte: start, EndByte: end, Kind: kind})
 		return
 	}
 	for i := 0; i < int(node.ChildCount()); i++ {
-		collectNodes(node.Child(i), keywords, out)
+		collectNodes(node.Child(i), keywords, viewStart, viewEnd, out)
 	}
 }
 
@@ -368,13 +475,11 @@ var dockerfileKeywords = map[string]Kind{
 // spans, emphasis, links) rather than leaves, since markdown's grammar
 // wraps meaningful spans in container nodes instead of single tokens.
 type markdownHighlighter struct {
-	parser *sitter.Parser
+	*incrementalParser
 }
 
 func newMarkdownHighlighter() *markdownHighlighter {
-	p := sitter.NewParser()
-	p.SetLanguage(tsmarkdown.GetLanguage())
-	return &markdownHighlighter{parser: p}
+	return &markdownHighlighter{incrementalParser: newIncrementalParser(tsmarkdown.GetLanguage())}
 }
 
 var markdownNodeKinds = map[string]Kind{
@@ -385,27 +490,29 @@ var markdownNodeKinds = map[string]Kind{
 	"block_quote": KindComment, "html_block": KindComment,
 }
 
-func (h *markdownHighlighter) Highlight(src []byte) ([]Token, error) {
-	tree, err := h.parser.ParseCtx(context.Background(), nil, src)
+func (h *markdownHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, error) {
+	tree, err := h.parse(src)
 	if err != nil {
 		return nil, err
 	}
-	defer tree.Close()
-
 	var out []Token
-	collectMarkdown(tree.RootNode(), &out)
+	collectMarkdown(tree.RootNode(), viewStart, viewEnd, &out)
 	return out, nil
 }
 
-func collectMarkdown(node *sitter.Node, out *[]Token) {
+func collectMarkdown(node *sitter.Node, viewStart, viewEnd int, out *[]Token) {
 	if node == nil {
 		return
 	}
+	start, end := int(node.StartByte()), int(node.EndByte())
+	if end <= viewStart || start >= viewEnd {
+		return
+	}
 	if kind, ok := markdownNodeKinds[node.Type()]; ok {
-		*out = append(*out, Token{StartByte: int(node.StartByte()), EndByte: int(node.EndByte()), Kind: kind})
+		*out = append(*out, Token{StartByte: start, EndByte: end, Kind: kind})
 		return // don't recurse into a node we've already colored as a whole
 	}
 	for i := 0; i < int(node.ChildCount()); i++ {
-		collectMarkdown(node.Child(i), out)
+		collectMarkdown(node.Child(i), viewStart, viewEnd, out)
 	}
 }

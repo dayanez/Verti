@@ -191,6 +191,7 @@ func TestToggleCommentUsesBlockCommentForCSS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	m.osClipboard = &fakeClipboard{}
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	sendKeys(m, key(tea.KeyCtrlUnderscore))
@@ -211,6 +212,7 @@ func TestSaveWithNoFilenameOpensSaveAsPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	m.osClipboard = &fakeClipboard{}
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	sendKeys(m, runes("unsaved text"))
 

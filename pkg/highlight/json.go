@@ -10,14 +10,17 @@ type JSONHighlighter struct{}
 
 func NewJSONHighlighter() *JSONHighlighter { return &JSONHighlighter{} }
 
-func (JSONHighlighter) Highlight(src []byte) ([]Token, error) {
+// Highlight ignores viewStart/viewEnd and always tokenizes the whole
+// file: JSON files are rarely huge, and this is a single cheap linear
+// scan rather than a tree-sitter parse, so there's nothing worth limiting.
+func (JSONHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, error) {
 	var out []Token
 	i := 0
 	n := len(src)
 
 	// expectKey tracks whether the next string literal is an object key
-	// (colors as KindType) versus a value (colors as KindString) — purely
-	// positional: true right after '{' or ',' at object-key position.
+	// (colors as KindType) versus a value (colors as KindString). It is
+	// purely positional: true right after '{' or ',' at object-key position.
 	expectKey := false
 	keyStack := []bool{}
 

@@ -1,7 +1,7 @@
 // Package luaengine loads the user's init.lua, exposing a small `verti`
 // API table (verti.keymap, verti.set) via an embedded Gopher-Lua
-// interpreter. A missing config file is not an error — the editor just
-// runs with defaults — but a config file that fails to parse or run is
+// interpreter. A missing config file is not an error: the editor just
+// runs with defaults, but a config file that fails to parse or run is
 // reported to the caller so it can be surfaced instead of silently
 // ignored.
 package luaengine

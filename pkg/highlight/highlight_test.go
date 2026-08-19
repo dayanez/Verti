@@ -1,6 +1,9 @@
 package highlight
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
 func findKind(t *testing.T, tokens []Token, src []byte, text string, kind Kind) {
 	t.Helper()
@@ -48,7 +51,7 @@ func TestGoHighlighting(t *testing.T) {
 	if !ok {
 		t.Fatal("no Go highlighter registered")
 	}
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -62,7 +65,7 @@ func TestPythonHighlighting(t *testing.T) {
 	src := []byte("def greet(name):\n    return \"hi \" + name\n")
 	r := NewRegistry()
 	h, _ := r.For("greet.py")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -74,7 +77,7 @@ func TestPythonHighlighting(t *testing.T) {
 func TestJSONHighlighting(t *testing.T) {
 	src := []byte(`{"name": "verti", "version": 1, "stable": true}`)
 	h := NewJSONHighlighter()
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -88,7 +91,7 @@ func TestBashHighlighting(t *testing.T) {
 	src := []byte("#!/bin/bash\nif [ -f \"$1\" ]; then\n  echo \"found\"\nfi\n")
 	r := NewRegistry()
 	h, _ := r.For("build.sh")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -100,7 +103,7 @@ func TestRubyHighlighting(t *testing.T) {
 	src := []byte("def greet(name)\n  return \"hi \" + name\nend\n")
 	r := NewRegistry()
 	h, _ := r.For("greet.rb")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -113,7 +116,7 @@ func TestJavaHighlighting(t *testing.T) {
 	src := []byte("public class Main {\n  // entry point\n  public static void main(String[] args) {}\n}\n")
 	r := NewRegistry()
 	h, _ := r.For("Main.java")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -126,7 +129,7 @@ func TestCSSHighlighting(t *testing.T) {
 	src := []byte("/* box */\nbody {\n  color: red;\n}\n")
 	r := NewRegistry()
 	h, _ := r.For("style.css")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestDockerfileHighlighting(t *testing.T) {
 	if !ok {
 		t.Fatal("no Dockerfile highlighter registered")
 	}
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -151,7 +154,7 @@ func TestMarkdownHighlighting(t *testing.T) {
 	src := []byte("# Title\n\nSome `code` and a [link](https://example.com).\n")
 	r := NewRegistry()
 	h, _ := r.For("README.md")
-	tokens, err := h.Highlight(src)
+	tokens, err := h.Highlight(src, 0, len(src))
 	if err != nil {
 		t.Fatalf("Highlight() error: %v", err)
 	}
@@ -167,4 +170,189 @@ func TestMarkdownHighlighting(t *testing.T) {
 	if !sawHeading {
 		t.Error("expected a KindHeading token for the '# Title' line")
 	}
+}
+
+// tokensMatch reports whether a and b classify the same byte spans the
+// same way, ignoring order (collectNodes' recursion order can legitimately
+// differ between an incremental and a from-scratch parse of otherwise
+// identical trees).
+func tokensMatch(a, b []Token) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sortByRange := func(toks []Token) []Token {
+		out := append([]Token(nil), toks...)
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].StartByte != out[j].StartByte {
+				return out[i].StartByte < out[j].StartByte
+			}
+			return out[i].EndByte < out[j].EndByte
+		})
+		return out
+	}
+	as, bs := sortByRange(a), sortByRange(b)
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestIncrementalHighlightMatchesFreshParse drives the same Highlighter
+// instance through a sequence of edits (as real typing would) and checks
+// its output after each one against a brand-new Highlighter given the
+// same source from scratch. This is what actually verifies the
+// incremental-reparse path (see incrementalParser.parse) produces correct
+// tokens, not just that it runs without erroring.
+func TestIncrementalHighlightMatchesFreshParse(t *testing.T) {
+	reg := NewRegistry()
+	stateful, ok := reg.For("main.go")
+	if !ok {
+		t.Fatal("no Go highlighter registered")
+	}
+
+	edits := []string{
+		"package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n",
+		"package main\n\nfunc main() {\n\tprintln(\"hi\")\n\tx := 1\n}\n",
+		"package main\n\nfunc main() {\n\tprintln(\"hi\")\n\tx := 1\n\ty := 2\n}\n",
+		"package main\n\nimport \"fmt\"\n\nfunc main() {\n\tprintln(\"hi\")\n\tx := 1\n\ty := 2\n}\n",
+		"package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n\tx := 1\n\ty := 2\n}\n",
+		"package main\n\nimport \"fmt\"\n\nfunc helper() int { return 42 }\n\nfunc main() {\n\tfmt.Println(\"hi\")\n\tx := 1\n\ty := 2\n}\n",
+	}
+
+	for step, src := range edits {
+		got, err := stateful.Highlight([]byte(src), 0, len(src))
+		if err != nil {
+			t.Fatalf("step %d: incremental Highlight() error: %v", step, err)
+		}
+
+		fresh, ok := reg.For("main.go")
+		if !ok {
+			t.Fatal("no Go highlighter registered")
+		}
+		want, err := fresh.Highlight([]byte(src), 0, len(src))
+		if err != nil {
+			t.Fatalf("step %d: fresh Highlight() error: %v", step, err)
+		}
+
+		if !tokensMatch(got, want) {
+			t.Fatalf("step %d: incremental tokens don't match a fresh parse\nincremental: %+v\nfresh:       %+v", step, got, want)
+		}
+	}
+}
+
+// TestViewportLimitingExcludesOutOfRangeTokensButKeepsOverlapping checks
+// that restricting Highlight to a byte range prunes tokens entirely
+// outside it while still including a token that merely overlaps the
+// range's edge (e.g. a multi-line string starting before the viewport and
+// extending into it) -- the case a naive "does the token start inside the
+// range" check would get wrong.
+func TestViewportLimitingExcludesOutOfRangeTokensButKeepsOverlapping(t *testing.T) {
+	src := []byte("package main\n\nfunc main() {\n\tx := `line one\nline two\nline three`\n\tprintln(x)\n}\n")
+	reg := NewRegistry()
+	h, _ := reg.For("main.go")
+
+	full, err := h.Highlight(src, 0, len(src))
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+	var wantMultiline Token
+	found := false
+	for _, tok := range full {
+		if string(src[tok.StartByte:tok.EndByte]) == "`line one\nline two\nline three`" {
+			wantMultiline = tok
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("setup: couldn't find the multi-line backtick string in a full-file parse")
+	}
+
+	// A viewport landing in the middle of "line two", well after the
+	// string's StartByte but before its EndByte.
+	viewStart := wantMultiline.StartByte + len("`line one\nline")
+	viewEnd := viewStart + 1
+
+	h2, _ := reg.For("main.go")
+	limited, err := h2.Highlight(src, viewStart, viewEnd)
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+
+	var gotMultiline bool
+	for _, tok := range limited {
+		if tok == wantMultiline {
+			gotMultiline = true
+		}
+		if tok.EndByte <= viewStart || tok.StartByte >= viewEnd {
+			t.Errorf("token %+v (%q) doesn't overlap the requested range [%d,%d) at all, want it pruned",
+				tok, src[tok.StartByte:tok.EndByte], viewStart, viewEnd)
+		}
+	}
+	if !gotMultiline {
+		t.Error("the multi-line string overlapping the viewport's edge was pruned entirely, want it kept")
+	}
+
+	// Sanity check: a comment far outside the viewport must not appear.
+	src2 := []byte("// nowhere near the viewport\n" + string(src))
+	h3, _ := reg.For("main.go")
+	limited2, err := h3.Highlight(src2, len(src2)-5, len(src2))
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+	for _, tok := range limited2 {
+		if string(src2[tok.StartByte:tok.EndByte]) == "// nowhere near the viewport" {
+			t.Error("a comment entirely outside the requested range was returned, want it pruned")
+		}
+	}
+}
+
+// TestHighlightWithUnchangedSourceReturnsSameTokens exercises the
+// incrementalParser's no-op shortcut (identical source since the last
+// call, e.g. a render triggered by moving the cursor rather than editing)
+// and checks it doesn't error and returns the same tokens as a fresh parse.
+func TestHighlightWithUnchangedSourceReturnsSameTokens(t *testing.T) {
+	src := []byte("package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n")
+	reg := NewRegistry()
+	h, _ := reg.For("main.go")
+
+	first, err := h.Highlight(src, 0, len(src))
+	if err != nil {
+		t.Fatalf("first Highlight() error: %v", err)
+	}
+	second, err := h.Highlight(src, 0, len(src))
+	if err != nil {
+		t.Fatalf("second (unchanged) Highlight() error: %v", err)
+	}
+	if !tokensMatch(first, second) {
+		t.Fatalf("tokens changed across an unchanged-source call\nfirst:  %+v\nsecond: %+v", first, second)
+	}
+}
+
+// TestRegistryForReturnsFreshInstancesNotShared checks that two calls to
+// For with the same extension return independent Highlighter instances,
+// not a shared one: sharing would corrupt incremental parse state when
+// two different open files use the same language (a real scenario now
+// that multiple tabs can be open at once).
+func TestRegistryForReturnsFreshInstancesNotShared(t *testing.T) {
+	reg := NewRegistry()
+	a, _ := reg.For("a.go")
+	b, _ := reg.For("b.go")
+
+	srcA := []byte("package main\n\nfunc a() {}\n")
+	srcB := []byte("package main\n\nfunc totallyDifferentAndLonger() { println(1, 2, 3) }\n")
+
+	if _, err := a.Highlight(srcA, 0, len(srcA)); err != nil {
+		t.Fatalf("a.Highlight() error: %v", err)
+	}
+	// If a and b were the same underlying instance, this call's diff
+	// against srcA would compute a bogus edit region and could panic or
+	// silently misclassify tokens.
+	tokensB, err := b.Highlight(srcB, 0, len(srcB))
+	if err != nil {
+		t.Fatalf("b.Highlight() error: %v", err)
+	}
+	findKind(t, tokensB, srcB, "func", KindKeyword)
+	findKind(t, tokensB, srcB, "totallyDifferentAndLonger", KindFunction)
 }

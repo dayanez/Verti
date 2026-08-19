@@ -6,11 +6,26 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/muesli/termenv"
 
 	"github.com/dommcpro/verti/pkg/paint"
 )
+
+// osClipboard abstracts the system clipboard so tests can substitute a
+// fake instead of touching the real one, which would be flaky in a
+// headless CI environment and rude to clobber on a developer's own
+// machine every time the test suite runs.
+type osClipboard interface {
+	ReadAll() (string, error)
+	WriteAll(text string) error
+}
+
+type realOSClipboard struct{}
+
+func (realOSClipboard) ReadAll() (string, error)   { return clipboard.ReadAll() }
+func (realOSClipboard) WriteAll(text string) error { return clipboard.WriteAll(text) }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	chord := msg.String()
@@ -23,8 +38,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePromptKey(msg, chord)
 	}
 
-	// When the subshell pane has focus, almost every keystroke — including
-	// chords like Ctrl+C or Ctrl+S that are global elsewhere — must reach
+	// When the subshell pane has focus, almost every keystroke, including
+	// chords like Ctrl+C or Ctrl+S that are global elsewhere, must reach
 	// the shell as raw input (Ctrl+C needs to interrupt a running command,
 	// not quit the editor). Only Esc and the terminal-toggle chord itself
 	// escape back out; everything else is forwarded.
@@ -45,6 +60,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case FocusExplorer:
 		return m.handleExplorerKey(msg)
+	case FocusSearchResults:
+		return m.handleSearchResultsKey(msg)
 	default:
 		return m.handleEditorKey(msg)
 	}
@@ -55,8 +72,12 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 	case "toggle_sidebar":
 		m.sidebarVisible = !m.sidebarVisible
 		if m.sidebarVisible {
-			m.focus = FocusExplorer
-		} else if m.focus == FocusExplorer {
+			if m.searchResultsActive {
+				m.focus = FocusSearchResults
+			} else {
+				m.focus = FocusExplorer
+			}
+		} else if m.focus == FocusExplorer || m.focus == FocusSearchResults {
 			m.focus = FocusEditor
 		}
 		m.layout()
@@ -155,6 +176,27 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 
 	case "toggle_comment":
 		m.toggleComment()
+		return m, nil
+
+	case "new_tab":
+		m.newTab()
+		return m, nil
+
+	case "close_tab":
+		m.closeActiveTab()
+		return m, nil
+
+	case "next_tab":
+		m.nextTab()
+		return m, nil
+
+	case "prev_tab":
+		m.prevTab()
+		return m, nil
+
+	case "find_in_files":
+		m.prompt = promptFindInFiles
+		m.promptText = ""
 		return m, nil
 
 	case "quit":
@@ -321,26 +363,37 @@ func (m *Model) cutSelectionOrLine() {
 	m.status = "cut"
 }
 
-// pasteClipboard inserts the clipboard's contents at the cursor, replacing
-// the active selection if any.
+// pasteClipboard inserts the OS clipboard's contents at the cursor if
+// it's readable and non-empty, falling back to Verti's own clipboard
+// register otherwise (e.g. no clipboard backend on a headless Linux box,
+// or an SSH session where the native clipboard API reaches the wrong
+// machine). Replaces the active selection if any.
 func (m *Model) pasteClipboard() {
-	if m.clipboard == "" {
+	text := m.clipboard
+	if osText, err := m.osClipboard.ReadAll(); err == nil && osText != "" {
+		text = osText
+	}
+	if text == "" {
 		return
 	}
 	m.recordUndoBoundary(editInsert)
 	m.buf.DeleteSelection()
-	m.buf.InsertString(m.clipboard)
+	m.buf.InsertString(text)
+	m.clipboard = text // keep the internal register in sync with what actually got pasted
 	m.status = "pasted"
 }
 
-// setClipboard stores text in Verti's own clipboard register (used by
-// paste) and best-effort mirrors it to the OS clipboard via an OSC52
-// escape sequence, which modern terminal emulators intercept — this works
-// over SSH and tmux too, without any platform-specific clipboard code.
-// There's no equivalent read path: OSC52 clipboard queries aren't reliably
-// supported, so paste always reads from Verti's own register instead.
+// setClipboard stores text in Verti's own clipboard register (paste's
+// fallback) and best-effort mirrors it two ways: the real OS clipboard
+// (via osClipboard, reliable on a local desktop session) and an OSC52
+// escape sequence (which modern terminal emulators intercept, reaching
+// the clipboard over SSH or tmux too, cases the native API can't reach
+// since it would act on the remote machine's clipboard instead). Both
+// are best-effort: a headless environment with neither available just
+// leaves paste using the internal register.
 func (m *Model) setClipboard(text string) {
 	m.clipboard = text
+	_ = m.osClipboard.WriteAll(text)
 	termenv.Copy(text)
 }
 
@@ -351,11 +404,11 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 	if m.prompt == promptConfirmDiscard {
 		switch chord {
 		case "y", "Y":
-			m.reallyOpenFile(m.pendingOpenPath)
+			m.reallyCloseActiveTab()
 		case "n", "N", "esc":
-			m.status = "open canceled"
+			m.status = "close canceled"
 		}
-		m.pendingOpenPath = ""
+		m.pendingCloseTab = false
 		m.prompt = promptNone
 		return m, nil
 	}
@@ -386,6 +439,10 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 			m.replaceFindTerm = ""
 		case promptSaveAs:
 			m.saveAs(m.promptText)
+			m.prompt = promptNone
+			m.promptText = ""
+		case promptFindInFiles:
+			m.runFileSearch(m.promptText)
 			m.prompt = promptNone
 			m.promptText = ""
 		}
@@ -484,7 +541,7 @@ func (m *Model) duplicateLine() {
 }
 
 // deleteLine removes the line under the cursor entirely, without touching
-// the clipboard — a quick way to drop a line without clobbering whatever
+// the clipboard: a quick way to drop a line without clobbering whatever
 // was last copied or cut.
 func (m *Model) deleteLine() {
 	start, end := m.buf.CurrentLineRange()

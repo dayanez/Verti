@@ -2,10 +2,13 @@ package app
 
 import (
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/hinshun/vt10x"
 
 	"github.com/dommcpro/verti/pkg/highlight"
 	"github.com/dommcpro/verti/pkg/paint"
@@ -15,7 +18,11 @@ func (m *Model) View() string {
 	if m.quitting || m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	sections := []string{m.renderTop()}
+	var sections []string
+	if bar := m.renderTabBar(); bar != "" {
+		sections = append(sections, bar)
+	}
+	sections = append(sections, m.renderTop())
 	if m.termVisible {
 		sections = append(sections, m.renderTerminalPane())
 	}
@@ -23,12 +30,43 @@ func (m *Model) View() string {
 	return strings.Join(sections, "\n")
 }
 
-func (m *Model) currentHighlighter() highlight.Highlighter {
-	h, ok := m.highlighter.For(m.displayFilename())
-	if !ok {
-		return nil
+// renderTabBar draws one row listing every open tab, with the active one
+// bracketed, or "" if there's only one tab (the common case looks exactly
+// as it did before tabs existed).
+func (m *Model) renderTabBar() string {
+	if len(m.tabs) <= 1 {
+		return ""
 	}
-	return h
+	parts := make([]string, len(m.tabs))
+	for i, t := range m.tabs {
+		filename, dirty := t.filename, t.buf.Dirty()
+		if i == m.activeTab {
+			filename, dirty = m.filename, m.buf.Dirty()
+		}
+		name := "[untitled]"
+		if filename != "" {
+			name = filepath.Base(filename)
+		}
+		if dirty {
+			name += " *"
+		}
+		if i == m.activeTab {
+			parts[i] = "[" + name + "]"
+		} else {
+			parts[i] = " " + name + " "
+		}
+	}
+	bar := strings.Join(parts, "|")
+	return lipgloss.NewStyle().Reverse(true).Width(m.width).Render(padOrTruncate(bar, m.width))
+}
+
+// currentHighlighter returns the active tab's own highlighter instance
+// (constructed once when that tab was opened, in tabs.go), not a fresh
+// one: reusing the same instance across renders is what lets it do
+// incremental reparsing instead of reparsing the whole file every
+// keystroke.
+func (m *Model) currentHighlighter() highlight.Highlighter {
+	return m.tabs[m.activeTab].highlighter
 }
 
 func (m *Model) renderTop() string {
@@ -41,14 +79,56 @@ func (m *Model) renderTop() string {
 	if !m.sidebarVisible {
 		return editorContent
 	}
-	sidebarContent := m.exp.Render(m.focus == FocusExplorer)
+	var sidebarContent string
+	if m.searchResultsActive {
+		sidebarContent = m.renderSearchResults()
+	} else {
+		sidebarContent = m.exp.Render(m.focus == FocusExplorer)
+	}
 	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Height(m.exp.Height).Render(strings.Repeat("│\n", m.exp.Height-1) + "│")
 	return lipgloss.JoinHorizontal(lipgloss.Top, sidebarContent, sep, editorContent)
 }
 
+// renderSearchResults draws the find-in-files results list in the sidebar
+// area, mirroring the file explorer's own layout (a title row, then one
+// row per result, the selected one reverse-styled), scrolled to keep the
+// selection visible.
+func (m *Model) renderSearchResults() string {
+	w, h := m.exp.Width, m.exp.Height
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	rows := make([]string, 0, h)
+	title := padOrTruncate(fmt.Sprintf("%d result(s)", len(m.searchResults)), w)
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render(title))
+
+	visibleRows := h - 1
+	scrollTop := 0
+	if m.searchSelected >= visibleRows {
+		scrollTop = m.searchSelected - visibleRows + 1
+	}
+	end := scrollTop + visibleRows
+	if end > len(m.searchResults) {
+		end = len(m.searchResults)
+	}
+	for i := scrollTop; i < end; i++ {
+		r := m.searchResults[i]
+		label := padOrTruncate(fmt.Sprintf("%s:%d: %s", r.Path, r.Line, r.Text), w)
+		if i == m.searchSelected {
+			rows = append(rows, lipgloss.NewStyle().Reverse(true).Render(label))
+		} else {
+			rows = append(rows, label)
+		}
+	}
+	for len(rows) < h {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	return strings.Join(rows, "\n")
+}
+
 // renderPaintCanvas draws the in-progress paint canvas as a standalone
 // drawing surface the size of the editor pane. Paint mode replaces the
-// editor's live view rather than alpha-blending onto styled text — see
+// editor's live view rather than alpha-blending onto styled text. See
 // README for why (compositing plain glyphs onto ANSI-styled text safely
 // would need a real cell-grid renderer, out of scope for v1).
 func (m *Model) renderPaintCanvas() string {
@@ -69,7 +149,7 @@ func (m *Model) renderPaintCanvas() string {
 		}
 		rows[y] = sb.String()
 	}
-	rows[0] = padOrTruncate(" PAINT — drag to draw, Enter to insert as a comment, c to clear, Esc to cancel ", w)
+	rows[0] = padOrTruncate(" PAINT: drag to draw, Enter to insert as a comment, c to clear, Esc to cancel ", w)
 	return strings.Join(rows, "\n")
 }
 
@@ -77,27 +157,101 @@ func (m *Model) renderTerminalPane() string {
 	if m.termWidth < 1 || m.termHeight < 1 {
 		return ""
 	}
-	title := lipgloss.NewStyle().Reverse(true).Render(padOrTruncate(" shell — Ctrl+` to hide ", m.termWidth))
+	title := lipgloss.NewStyle().Reverse(true).Render(padOrTruncate(" shell (Ctrl+` to hide) ", m.termWidth))
 
 	contentHeight := m.termHeight - 1
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	text := ansi.Strip(string(m.termOutput))
-	lines := strings.Split(text, "\n")
-	if len(lines) > contentHeight {
-		lines = lines[len(lines)-contentHeight:]
-	}
-	for len(lines) < contentHeight {
-		lines = append(lines, "")
+
+	var lines []string
+	if vt := m.term.Screen(); vt != nil && vtInAltScreen(vt) {
+		// A full-screen program (vim, top, less, ...) has switched to the
+		// alternate screen buffer: render its real character grid instead
+		// of scrolling raw bytes, which is what actually lets it redraw
+		// correctly instead of showing garbled escape-sequence soup.
+		lines = m.renderTerminalCellGrid(vt, m.termWidth, contentHeight)
+	} else {
+		text := ansi.Strip(string(m.termOutput))
+		lines = strings.Split(text, "\n")
+		if len(lines) > contentHeight {
+			lines = lines[len(lines)-contentHeight:]
+		}
+		for len(lines) < contentHeight {
+			lines = append(lines, "")
+		}
+		for i, l := range lines {
+			lines[i] = padOrTruncate(l, m.termWidth)
+		}
 	}
 
 	rows := make([]string, 0, m.termHeight)
 	rows = append(rows, title)
-	for _, l := range lines {
-		rows = append(rows, padOrTruncate(l, m.termWidth))
-	}
+	rows = append(rows, lines...)
 	return strings.Join(rows, "\n")
+}
+
+func vtInAltScreen(vt vt10x.Terminal) bool {
+	vt.Lock()
+	defer vt.Unlock()
+	return vt.Mode()&vt10x.ModeAltScreen != 0
+}
+
+// renderTerminalCellGrid draws the virtual terminal's current screen as a
+// real width x height character grid with colors and cursor position.
+// vt10x's public API doesn't expose bold/italic/underline/reverse-video
+// (those bits exist internally but aren't exported), so those specific
+// accents are lost; the layout, text, and 256-color/truecolor palette are
+// not.
+func (m *Model) renderTerminalCellGrid(vt vt10x.Terminal, width, height int) []string {
+	vt.Lock()
+	defer vt.Unlock()
+
+	cols, rows := vt.Size()
+	cx, cy := -1, -1
+	if vt.CursorVisible() {
+		cur := vt.Cursor()
+		cx, cy = cur.X, cur.Y
+	}
+
+	lines := make([]string, height)
+	for y := 0; y < height; y++ {
+		var sb strings.Builder
+		for x := 0; x < width; x++ {
+			ch := " "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+			if x < cols && y < rows {
+				g := vt.Cell(x, y)
+				if g.Char != 0 {
+					ch = string(g.Char)
+				}
+				style = lipgloss.NewStyle().Foreground(vtColor(g.FG, lipgloss.Color("252")))
+				if g.BG != vt10x.DefaultBG {
+					style = style.Background(vtColor(g.BG, ""))
+				}
+			}
+			if x == cx && y == cy {
+				style = style.Reverse(true)
+			}
+			sb.WriteString(style.Render(ch))
+		}
+		lines[y] = sb.String()
+	}
+	return lines
+}
+
+// vtColor maps a vt10x.Color (an ANSI/256-color palette index, a packed
+// 24-bit truecolor value, or one of the Default* sentinels) to the
+// lipgloss.Color that renders the same thing.
+func vtColor(c vt10x.Color, fallback lipgloss.Color) lipgloss.Color {
+	switch {
+	case c == vt10x.DefaultFG || c == vt10x.DefaultBG || c == vt10x.DefaultCursor:
+		return fallback
+	case c < 256:
+		return lipgloss.Color(strconv.Itoa(int(c)))
+	default:
+		return lipgloss.Color(fmt.Sprintf("#%06x", uint32(c)))
+	}
 }
 
 func (m *Model) renderStatusBar() string {
@@ -121,7 +275,7 @@ func (m *Model) renderStatusBar() string {
 	}
 	line, col := m.buf.CursorLineCol()
 
-	left := fmt.Sprintf(" %s%s — %s", name, dirty, m.status)
+	left := fmt.Sprintf(" %s%s | %s", name, dirty, m.status)
 	if label, ok := promptLabels[m.prompt]; ok {
 		left = fmt.Sprintf(" %s%s_", label, m.promptText)
 	}

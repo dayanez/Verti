@@ -1,7 +1,10 @@
 // Package terminal manages the embedded interactive subshell shown in the
 // bottom pane (toggled with Ctrl+`). It wraps a cross-platform PTY
 // (Unix pty on Linux/macOS, ConPTY on Windows via aymanbagabas/go-pty) so
-// the rest of the editor only ever deals with plain Read/Write/Resize.
+// the rest of the editor only ever deals with plain Read/Write/Resize. It
+// also feeds every byte read from the PTY into a vt10x virtual terminal,
+// so callers can render a real full-screen program (vim, top, ...)
+// correctly via Screen() instead of just scrolling raw bytes.
 package terminal
 
 import (
@@ -11,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/aymanbagabas/go-pty"
+	"github.com/hinshun/vt10x"
 )
 
 var (
@@ -23,6 +27,7 @@ type Manager struct {
 	mu  sync.Mutex
 	pty pty.Pty
 	cmd *pty.Cmd
+	vt  vt10x.Terminal
 }
 
 // New returns a Manager with no subshell started yet.
@@ -48,8 +53,16 @@ func (m *Manager) Start(cols, rows int) error {
 	if cols > 0 && rows > 0 {
 		_ = p.Resize(cols, rows)
 	}
+	vtCols, vtRows := cols, rows
+	if vtCols < 1 {
+		vtCols = 1
+	}
+	if vtRows < 1 {
+		vtRows = 1
+	}
 	m.pty = p
 	m.cmd = cmd
+	m.vt = vt10x.New(vt10x.WithSize(vtCols, vtRows))
 	return nil
 }
 
@@ -91,7 +104,30 @@ func (m *Manager) Resize(cols, rows int) error {
 	if pt == nil {
 		return nil
 	}
+	if cols > 0 && rows > 0 {
+		if vt := m.Screen(); vt != nil {
+			vt.Resize(cols, rows)
+		}
+	}
 	return pt.Resize(cols, rows)
+}
+
+// Feed writes PTY output bytes into the virtual terminal, updating its
+// screen state (cursor, cell grid, alt-screen mode, ...). Call this with
+// whatever Read returns; it's a no-op if no subshell is running.
+func (m *Manager) Feed(data []byte) {
+	if vt := m.Screen(); vt != nil {
+		_, _ = vt.Write(data)
+	}
+}
+
+// Screen returns the virtual terminal's current state for rendering
+// (Cell, Cursor, CursorVisible, Mode, Size), or nil if no subshell is
+// running.
+func (m *Manager) Screen() vt10x.Terminal {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.vt
 }
 
 // Running reports whether a subshell is currently active.
@@ -121,5 +157,6 @@ func (m *Manager) Close() error {
 	err := m.pty.Close()
 	m.pty = nil
 	m.cmd = nil
+	m.vt = nil
 	return err
 }

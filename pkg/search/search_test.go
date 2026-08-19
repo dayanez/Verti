@@ -1,0 +1,127 @@
+package search
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+func TestFilesFindsMatchesAcrossMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.go"), "package a\n\nfunc needle() {}\n")
+	writeFile(t, filepath.Join(dir, "sub", "b.go"), "package b\n\n// contains needle too\n")
+	writeFile(t, filepath.Join(dir, "c.go"), "package c\n\nfunc unrelated() {}\n")
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("len(matches) = %d, want 2: %+v", len(matches), matches)
+	}
+
+	byPath := map[string]Match{}
+	for _, m := range matches {
+		byPath[filepath.ToSlash(m.Path)] = m
+	}
+	if m, ok := byPath["a.go"]; !ok || m.Line != 3 {
+		t.Errorf("a.go match = %+v, ok=%v, want line 3", m, ok)
+	}
+	if m, ok := byPath["sub/b.go"]; !ok || m.Line != 3 {
+		t.Errorf("sub/b.go match = %+v, ok=%v, want line 3", m, ok)
+	}
+}
+
+func TestFilesSkipsDotDirectories(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".git", "config"), "needle inside git metadata\n")
+	writeFile(t, filepath.Join(dir, "real.go"), "needle in real source\n")
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1 (the .git file should be skipped): %+v", len(matches), matches)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(matches[0].Path), "real.go") {
+		t.Errorf("match path = %q, want it to be real.go", matches[0].Path)
+	}
+}
+
+func TestFilesSkipsBinaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "data.bin")
+	if err := os.WriteFile(binPath, []byte("needle\x00binary junk"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "text.go"), "needle in text\n")
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1 (the binary file should be skipped): %+v", len(matches), matches)
+	}
+}
+
+func TestFilesSkipsOversizedFiles(t *testing.T) {
+	dir := t.TempDir()
+	big := bytes.Repeat([]byte("x"), maxFileSize+1)
+	copy(big, []byte("needle"))
+	if err := os.WriteFile(filepath.Join(dir, "huge.txt"), big, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "small.txt"), "needle\n")
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1 (the oversized file should be skipped): %+v", len(matches), matches)
+	}
+}
+
+func TestFilesReturnsNilForEmptyQuery(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.go"), "anything\n")
+
+	matches, err := Files(dir, "")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("len(matches) = %d, want 0 for an empty query", len(matches))
+	}
+}
+
+func TestFilesCapsResultsAtMaxMatches(t *testing.T) {
+	dir := t.TempDir()
+	var sb strings.Builder
+	for i := 0; i < maxMatches+50; i++ {
+		sb.WriteString("needle\n")
+	}
+	writeFile(t, filepath.Join(dir, "many.txt"), sb.String())
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != maxMatches {
+		t.Fatalf("len(matches) = %d, want the capped %d", len(matches), maxMatches)
+	}
+}

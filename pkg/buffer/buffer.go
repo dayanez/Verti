@@ -40,31 +40,48 @@ type GapBuffer struct {
 	// normalizes CRLF to LF up front rather than teaching the rest of the
 	// buffer about '\r'.
 	crlf bool
+
+	// perm is the permission bits SaveFile writes with. LoadFile sets it
+	// from the file actually on disk so an executable script, for
+	// instance, keeps its +x bit; a buffer with no backing file yet (New,
+	// NewFromString) defaults to a plain 0o644 for its eventual Save As.
+	perm os.FileMode
 }
+
+const defaultFilePerm = 0o644
 
 // New returns an empty buffer.
 func New() *GapBuffer {
 	return &GapBuffer{
 		data:   make([]rune, defaultGapSize),
 		gapEnd: defaultGapSize,
+		perm:   defaultFilePerm,
 	}
 }
 
 // NewFromString returns a buffer pre-populated with s, cursor at offset 0.
+// The buffer starts out not dirty: populating it is construction, not a
+// user edit, even though it's built via InsertString internally.
 func NewFromString(s string) *GapBuffer {
 	gb := New()
 	gb.InsertString(s)
 	gb.MoveCursorTo(0)
+	gb.dirty = false
 	return gb
 }
 
 // LoadFile reads path and returns a buffer containing its contents. CRLF
 // line endings are normalized to LF and remembered, so SaveFile writes the
-// file back with its original line-ending convention.
+// file back with its original line-ending convention, and so does the
+// file's permission mode (an executable script keeps its +x bit).
 func LoadFile(path string) (*GapBuffer, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	perm := os.FileMode(defaultFilePerm)
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
 	}
 	text := string(raw)
 	crlf := strings.Contains(text, "\r\n")
@@ -73,21 +90,24 @@ func LoadFile(path string) (*GapBuffer, error) {
 	}
 	gb := NewFromString(text)
 	gb.crlf = crlf
+	gb.perm = perm
 	return gb, nil
 }
 
 // SaveFile writes the buffer's current contents to path, truncating it,
-// restoring CRLF line endings first if the file originally had them.
+// restoring CRLF line endings first if the file originally had them, and
+// using the permission bits LoadFile captured (or 0o644 by default).
 func (gb *GapBuffer) SaveFile(path string) error {
 	gb.mu.Lock()
 	text := gb.stringLocked()
 	crlf := gb.crlf
+	perm := gb.perm
 	gb.dirty = false
 	gb.mu.Unlock()
 	if crlf {
 		text = strings.ReplaceAll(text, "\n", "\r\n")
 	}
-	return os.WriteFile(path, []byte(text), 0o644)
+	return os.WriteFile(path, []byte(text), perm)
 }
 
 // Dirty reports whether the buffer has unsaved changes.
@@ -554,8 +574,22 @@ func (gb *GapBuffer) offsetForLineColLocked(line, col int) int {
 }
 
 // growGap enlarges the gap so it can hold at least minExtra more runes.
+// growGap enlarges the gap so it can hold at least minExtra more runes.
+// Growth is geometric (at least doubling the buffer's total size), the
+// same amortized-O(1) trick append() uses. A fixed-size increment here
+// would make bulk insertion (loading a large file, a large paste, which
+// both go through InsertString one rune at a time) degrade into O(n^2):
+// every defaultGapSize runes would re-copy the entire buffer built so far.
 func (gb *GapBuffer) growGap(minExtra int) {
-	growth := (gb.gapEnd - gb.gapStart) + minExtra + defaultGapSize
+	existingGap := gb.gapEnd - gb.gapStart
+	needed := minExtra - existingGap + defaultGapSize
+	if needed < defaultGapSize {
+		needed = defaultGapSize
+	}
+	growth := len(gb.data)
+	if growth < needed {
+		growth = needed
+	}
 	newLen := len(gb.data) + growth
 	newData := make([]rune, newLen)
 	copy(newData, gb.data[:gb.gapStart])

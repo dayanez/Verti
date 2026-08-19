@@ -1,5 +1,5 @@
 // Package display renders a buffer.GapBuffer, styled by a
-// highlight.Highlighter, into terminal text — line numbers, scrolling
+// highlight.Highlighter, into terminal text: line numbers, scrolling
 // (vertical and horizontal), and a cursor cell.
 package display
 
@@ -19,41 +19,45 @@ import (
 // gutter and cursor. Colors are chosen to be readable on both light and
 // dark 256-color terminals.
 type Theme struct {
-	Default     lipgloss.Style
-	Keyword     lipgloss.Style
-	String      lipgloss.Style
-	Comment     lipgloss.Style
-	Number      lipgloss.Style
-	Function    lipgloss.Style
-	Type        lipgloss.Style
-	Variable    lipgloss.Style
-	Operator    lipgloss.Style
-	Punctuation lipgloss.Style
-	Constant    lipgloss.Style
-	Heading     lipgloss.Style
-	LineNumber  lipgloss.Style
-	Cursor      lipgloss.Style
-	Selection   lipgloss.Style
+	Default        lipgloss.Style
+	Keyword        lipgloss.Style
+	String         lipgloss.Style
+	Comment        lipgloss.Style
+	Number         lipgloss.Style
+	Function       lipgloss.Style
+	Type           lipgloss.Style
+	Variable       lipgloss.Style
+	Operator       lipgloss.Style
+	Punctuation    lipgloss.Style
+	Constant       lipgloss.Style
+	Heading        lipgloss.Style
+	LineNumber     lipgloss.Style
+	Cursor         lipgloss.Style
+	Selection      lipgloss.Style
+	Scrollbar      lipgloss.Style
+	ScrollbarThumb lipgloss.Style
 }
 
 // DefaultTheme returns the editor's built-in color scheme.
 func DefaultTheme() Theme {
 	return Theme{
-		Default:     lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		Keyword:     lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true),
-		String:      lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
-		Comment:     lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
-		Number:      lipgloss.NewStyle().Foreground(lipgloss.Color("215")),
-		Function:    lipgloss.NewStyle().Foreground(lipgloss.Color("111")),
-		Type:        lipgloss.NewStyle().Foreground(lipgloss.Color("221")),
-		Variable:    lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		Operator:    lipgloss.NewStyle().Foreground(lipgloss.Color("246")),
-		Punctuation: lipgloss.NewStyle().Foreground(lipgloss.Color("246")),
-		Constant:    lipgloss.NewStyle().Foreground(lipgloss.Color("215")).Bold(true),
-		Heading:     lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Underline(true),
-		LineNumber:  lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Cursor:      lipgloss.NewStyle().Reverse(true),
-		Selection:   lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255")),
+		Default:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		Keyword:        lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true),
+		String:         lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+		Comment:        lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
+		Number:         lipgloss.NewStyle().Foreground(lipgloss.Color("215")),
+		Function:       lipgloss.NewStyle().Foreground(lipgloss.Color("111")),
+		Type:           lipgloss.NewStyle().Foreground(lipgloss.Color("221")),
+		Variable:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		Operator:       lipgloss.NewStyle().Foreground(lipgloss.Color("246")),
+		Punctuation:    lipgloss.NewStyle().Foreground(lipgloss.Color("246")),
+		Constant:       lipgloss.NewStyle().Foreground(lipgloss.Color("215")).Bold(true),
+		Heading:        lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Underline(true),
+		LineNumber:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		Cursor:         lipgloss.NewStyle().Reverse(true),
+		Selection:      lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255")),
+		Scrollbar:      lipgloss.NewStyle().Foreground(lipgloss.Color("237")),
+		ScrollbarThumb: lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
 	}
 }
 
@@ -108,6 +112,12 @@ func gutterWidth(lineCount int) int {
 	return len(strconv.Itoa(lineCount)) + 2
 }
 
+// scrollbarWidth is the one column always reserved on the right edge of
+// the viewport for the scroll indicator, kept constant (rather than only
+// appearing once a file is taller than the viewport) so the gutter and
+// text don't jump sideways as you type past that threshold.
+const scrollbarWidth = 1
+
 // EnsureCursorVisible adjusts scroll offsets so the buffer's cursor stays
 // within the viewport.
 func (e *Editor) EnsureCursorVisible(buf *buffer.GapBuffer) {
@@ -123,7 +133,7 @@ func (e *Editor) EnsureCursorVisible(buf *buffer.GapBuffer) {
 		e.ScrollLine = 0
 	}
 
-	visibleWidth := e.Width - gutterWidth(buf.LineCount())
+	visibleWidth := e.Width - gutterWidth(buf.LineCount()) - scrollbarWidth
 	if visibleWidth < 1 {
 		visibleWidth = 1
 	}
@@ -147,7 +157,8 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 	}
 	e.EnsureCursorVisible(buf)
 
-	lines := buf.Lines()
+	text := buf.String()
+	lines := strings.Split(text, "\n")
 	cursorLine, cursorCol := buf.CursorLineCol()
 	gutterW := gutterWidth(len(lines))
 
@@ -157,17 +168,9 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 		selStartLine, selStartCol = buf.OffsetLineCol(selStart)
 		selEndLine, selEndCol = buf.OffsetLineCol(selEnd)
 	}
-	visibleWidth := e.Width - gutterW
+	visibleWidth := e.Width - gutterW - scrollbarWidth
 	if visibleWidth < 1 {
 		visibleWidth = 1
-	}
-
-	var tokens []highlight.Token
-	if hl != nil {
-		if toks, err := hl.Highlight([]byte(buf.String())); err == nil {
-			tokens = toks
-			sort.Slice(tokens, func(i, j int) bool { return tokens[i].StartByte < tokens[j].StartByte })
-		}
 	}
 
 	lineStartByte := make([]int, len(lines))
@@ -182,6 +185,27 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 		end = len(lines)
 	}
 
+	// Only ask the highlighter to classify the visible line range (plus
+	// whatever a token straddling its edges pulls in), not the whole
+	// file: a huge file's worth of tokens off-screen would otherwise be
+	// computed and thrown away on every single keystroke.
+	viewStart := 0
+	if e.ScrollLine < len(lineStartByte) {
+		viewStart = lineStartByte[e.ScrollLine]
+	}
+	viewEnd := offset
+	if end < len(lineStartByte) {
+		viewEnd = lineStartByte[end]
+	}
+
+	var tokens []highlight.Token
+	if hl != nil {
+		if toks, err := hl.Highlight([]byte(text), viewStart, viewEnd); err == nil {
+			tokens = toks
+			sort.Slice(tokens, func(i, j int) bool { return tokens[i].StartByte < tokens[j].StartByte })
+		}
+	}
+
 	tIdx := 0
 	if e.ScrollLine < len(lineStartByte) {
 		start := lineStartByte[e.ScrollLine]
@@ -189,6 +213,8 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 			tIdx++
 		}
 	}
+
+	thumbStart, thumbEnd := e.scrollbarThumb(len(lines))
 
 	rows := make([]string, 0, e.Height)
 	for i := e.ScrollLine; i < end; i++ {
@@ -203,12 +229,54 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 			}
 		}
 		gutter := e.Theme.LineNumber.Width(gutterW - 1).Align(lipgloss.Right).Render(strconv.Itoa(i + 1))
-		rows = append(rows, gutter+" "+e.renderLine(lines[i], lineStartByte[i], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth, selFrom, selTo))
+		rowIdx := i - e.ScrollLine
+		line := e.renderLine(lines[i], lineStartByte[i], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth, selFrom, selTo)
+		rows = append(rows, gutter+" "+line+scrollbarCell(e.Theme, rowIdx, thumbStart, thumbEnd))
 	}
 	for len(rows) < e.Height {
-		rows = append(rows, e.Theme.LineNumber.Width(gutterW-1).Align(lipgloss.Right).Render("~")+" ")
+		rowIdx := len(rows)
+		gutter := e.Theme.LineNumber.Width(gutterW - 1).Align(lipgloss.Right).Render("~")
+		rows = append(rows, gutter+" "+strings.Repeat(" ", visibleWidth)+scrollbarCell(e.Theme, rowIdx, thumbStart, thumbEnd))
 	}
 	return strings.Join(rows, "\n")
+}
+
+// scrollbarThumb returns the [start, end) row range (within the
+// viewport's e.Height rows) the scrollbar thumb should cover for a file
+// of totalLines, proportional to how much of it is currently visible and
+// how far scrolled it is. When everything fits in the viewport, the
+// thumb fills every row, matching the usual convention of an unscrollable
+// track.
+func (e *Editor) scrollbarThumb(totalLines int) (start, end int) {
+	if totalLines < 1 {
+		totalLines = 1
+	}
+	size := e.Height * e.Height / totalLines
+	if size < 1 {
+		size = 1
+	}
+	if size > e.Height {
+		size = e.Height
+	}
+	maxScroll := totalLines - e.Height
+	if maxScroll > 0 {
+		track := e.Height - size
+		start = e.ScrollLine * track / maxScroll
+		if start > track {
+			start = track
+		}
+	}
+	return start, start + size
+}
+
+// scrollbarCell renders the one-column scrollbar cell for viewport row
+// rowIdx: the thumb glyph if rowIdx falls within [thumbStart, thumbEnd),
+// the track glyph otherwise.
+func scrollbarCell(theme Theme, rowIdx, thumbStart, thumbEnd int) string {
+	if rowIdx >= thumbStart && rowIdx < thumbEnd {
+		return theme.ScrollbarThumb.Render("█")
+	}
+	return theme.Scrollbar.Render("│")
 }
 
 // renderLine draws one line. selFrom/selTo are the rune-column bounds of
@@ -272,6 +340,14 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 
 	if isCursorLine && cursorCol >= len(runes) && cursorCol >= e.ScrollCol && rendered < visibleWidth {
 		out.WriteString(e.Theme.Cursor.Render(" "))
+		rendered++
+	}
+	// Pad out to visibleWidth so every row is exactly the same visual
+	// width regardless of line length: the scrollbar column appended
+	// after this needs a consistent landing spot, not one that drifts
+	// left on short lines.
+	if rendered < visibleWidth {
+		out.WriteString(strings.Repeat(" ", visibleWidth-rendered))
 	}
 	return out.String()
 }

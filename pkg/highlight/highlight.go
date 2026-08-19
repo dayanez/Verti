@@ -1,7 +1,7 @@
 // Package highlight turns source text into styled token spans. It defines
 // a small, UI-agnostic interface (Highlighter) so the rendering package
 // never needs to know whether a given language is highlighted via a real
-// tree-sitter AST walk or a hand-written tokenizer — both implement the
+// tree-sitter AST walk or a hand-written tokenizer: both implement the
 // same contract and are selected by file extension through a Registry.
 package highlight
 
@@ -34,19 +34,30 @@ type Token struct {
 	Kind      Kind
 }
 
-// Highlighter classifies the contents of a single source file. A
+// Highlighter classifies the contents of a single source file, optionally
+// restricted to [viewStart, viewEnd) so a caller that only needs to render
+// part of a large file (the visible viewport) doesn't pay to classify the
+// rest; pass 0, len(src) to request the whole file. Implementations that
+// retain state between calls (the tree-sitter-backed ones) use each call's
+// source text, diffed against the previous call's, to reparse only the
+// edited region instead of the whole file -- which only works if the
+// caller reuses the same Highlighter instance across calls for a given
+// file. A fresh instance every call defeats it and just costs more. A
 // Highlighter is not required to be safe for concurrent use; callers
-// (the Registry included) serialize calls per instance.
+// serialize calls per instance.
 type Highlighter interface {
-	Highlight(src []byte) ([]Token, error)
+	Highlight(src []byte, viewStart, viewEnd int) ([]Token, error)
 }
 
-// Registry resolves a Highlighter by file extension (including the leading
-// dot, e.g. ".go"), lazily constructing and caching one instance per
-// extension.
+// Registry resolves a Highlighter constructor by file extension (including
+// the leading dot, e.g. ".go"). Unlike a typical registry it does not
+// cache instances: each Highlighter now retains its own parse state
+// (see the Highlighter doc comment), so a single shared-by-extension
+// instance would corrupt itself when two files of the same language are
+// open at once. Callers construct one instance per open file (via For)
+// and hold onto it themselves for as long as that file stays open.
 type Registry struct {
 	factories map[string]func() Highlighter
-	instances map[string]Highlighter
 }
 
 // NewRegistry returns a Registry pre-populated with the editor's default
@@ -59,7 +70,6 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{
 		factories: make(map[string]func() Highlighter),
-		instances: make(map[string]Highlighter),
 	}
 	registerTreeSitterLanguages(r)
 	r.Register(".json", func() Highlighter { return NewJSONHighlighter() })
@@ -70,31 +80,21 @@ func NewRegistry() *Registry {
 // Registering the same extension twice replaces the previous entry.
 func (r *Registry) Register(ext string, factory func() Highlighter) {
 	r.factories[strings.ToLower(ext)] = factory
-	delete(r.instances, strings.ToLower(ext))
 }
 
-// For returns the Highlighter registered for filename, and whether one was
-// found. filename is matched two ways: first as a whole lowercase name
-// (so extension-less conventions like "Dockerfile" can be registered via
-// Register("dockerfile", ...)), then by extension.
+// For constructs a fresh Highlighter registered for filename, and whether
+// one was found. filename is matched two ways: first as a whole lowercase
+// name (so extension-less conventions like "Dockerfile" can be registered
+// via Register("dockerfile", ...)), then by extension. Call this once per
+// opened file and keep the result; see the Highlighter doc comment for why.
 func (r *Registry) For(filename string) (Highlighter, bool) {
-	if h, ok := r.lookup(strings.ToLower(filename)); ok {
-		return h, true
+	if factory, ok := r.factories[strings.ToLower(filename)]; ok {
+		return factory(), true
 	}
-	return r.lookup(extOf(filename))
-}
-
-func (r *Registry) lookup(key string) (Highlighter, bool) {
-	if h, ok := r.instances[key]; ok {
-		return h, true
+	if factory, ok := r.factories[extOf(filename)]; ok {
+		return factory(), true
 	}
-	factory, ok := r.factories[key]
-	if !ok {
-		return nil, false
-	}
-	h := factory()
-	r.instances[key] = h
-	return h, true
+	return nil, false
 }
 
 func extOf(filename string) string {

@@ -10,7 +10,7 @@
 --   verti.set(option, value)     -- change an editor setting
 --   verti.keymap(chord, command) -- bind or rebind a keyboard shortcut
 --
--- A config file is entirely optional — if it's missing, verti just runs
+-- A config file is entirely optional. If it's missing, verti just runs
 -- with its built-in defaults.
 
 verti.set("tab_width", 4)

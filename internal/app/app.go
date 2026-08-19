@@ -1,5 +1,5 @@
-// Package app wires every pkg/ subsystem — buffer, display, explorer,
-// highlight, luaengine, paint, terminal — into a single bubbletea Model:
+// Package app wires every pkg/ subsystem (buffer, display, explorer,
+// highlight, luaengine, paint, terminal) into a single bubbletea Model:
 // the editor's central event loop and default keybindings.
 package app
 
@@ -15,6 +15,7 @@ import (
 	"github.com/dommcpro/verti/pkg/highlight"
 	"github.com/dommcpro/verti/pkg/luaengine"
 	"github.com/dommcpro/verti/pkg/paint"
+	"github.com/dommcpro/verti/pkg/search"
 	"github.com/dommcpro/verti/pkg/terminal"
 )
 
@@ -25,6 +26,7 @@ const (
 	FocusEditor Focus = iota
 	FocusExplorer
 	FocusTerminal
+	FocusSearchResults
 )
 
 type editKind int
@@ -47,18 +49,20 @@ const (
 	promptReplaceFind
 	promptReplaceWith
 	promptSaveAs
+	promptFindInFiles
 )
 
 // promptLabels gives the status-bar prefix for prompts that show live
 // typed input. promptConfirmDiscard is deliberately absent: its full
-// message (already phrased as a question) is set directly on m.status
-// instead.
+// message (already phrased as a question, asking whether to close a
+// dirty tab without saving) is set directly on m.status instead.
 var promptLabels = map[promptKind]string{
 	promptFind:        "Find: ",
 	promptGoto:        "Go to line: ",
 	promptReplaceFind: "Replace -- find: ",
 	promptReplaceWith: "Replace -- with: ",
 	promptSaveAs:      "Save as: ",
+	promptFindInFiles: "Find in files: ",
 }
 
 type snapshot struct {
@@ -83,6 +87,12 @@ type Model struct {
 	exp            *explorer.Explorer
 	sidebarVisible bool
 
+	// searchResults holds project-wide find-in-files results, shown in
+	// the sidebar area in place of the file tree while searchResultsActive.
+	searchResults       []search.Match
+	searchSelected      int
+	searchResultsActive bool
+
 	term        *terminal.Manager
 	termVisible bool
 	termOutput  []byte
@@ -91,12 +101,20 @@ type Model struct {
 
 	paintOverlay *paint.Overlay
 
-	clipboard string
+	clipboard   string
+	osClipboard osClipboard
 
 	prompt          promptKind
 	promptText      string
-	pendingOpenPath string
+	pendingCloseTab bool
 	replaceFindTerm string
+
+	// tabs holds every open file's editing state; activeTab indexes the
+	// one currently mirrored into buf/filename/undoStack/redoStack/etc.
+	// above. See tabs.go for how switching tabs snapshots and restores
+	// that state.
+	tabs      []*openBuffer
+	activeTab int
 
 	focus  Focus
 	width  int
@@ -148,10 +166,11 @@ func New(rootDir, filePath string) (*Model, error) {
 		status = "config error: " + cfgErr.Error()
 	}
 
+	registry := highlight.NewRegistry()
 	m := &Model{
 		buf:            buf,
 		filename:       filename,
-		highlighter:    highlight.NewRegistry(),
+		highlighter:    registry,
 		editorView:     display.New(),
 		exp:            exp,
 		sidebarVisible: true,
@@ -161,6 +180,9 @@ func New(rootDir, filePath string) (*Model, error) {
 		cfg:            cfg,
 		keymap:         keymap,
 		status:         status,
+		tabs:           []*openBuffer{{buf: buf, filename: filename, highlighter: highlighterFor(registry, filename)}},
+		activeTab:      0,
+		osClipboard:    realOSClipboard{},
 	}
 	return m, nil
 }
@@ -195,6 +217,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 	case termOutputMsg:
 		m.appendTermOutput(msg.data)
+		m.term.Feed(msg.data)
 		return m, readTermCmd(m.term)
 	case termClosedMsg:
 		m.termVisible = false
@@ -219,6 +242,11 @@ func (m *Model) appendTermOutput(data []byte) {
 func (m *Model) layout() {
 	const statusH = 1
 
+	tabBarH := 0
+	if len(m.tabs) > 1 {
+		tabBarH = 1
+	}
+
 	sidebarW := 0
 	if m.sidebarVisible {
 		sidebarW = 28
@@ -241,7 +269,7 @@ func (m *Model) layout() {
 		}
 	}
 
-	topH := m.height - termH - statusH
+	topH := m.height - termH - statusH - tabBarH
 	if topH < 1 {
 		topH = 1
 	}
@@ -264,7 +292,7 @@ func (m *Model) layout() {
 
 // recordUndoBoundary snapshots the buffer before an edit if this edit
 // doesn't coalesce with the previous one (different kind, or too much
-// time has passed), and always clears the redo stack — the usual "any
+// time has passed), and always clears the redo stack: the usual "any
 // new edit invalidates redo history" rule.
 func (m *Model) recordUndoBoundary(kind editKind) {
 	now := time.Now()
@@ -301,33 +329,4 @@ func (m *Model) redo() {
 	m.undoStack = append(m.undoStack, cur)
 	m.buf.Restore(last.text, last.cursor)
 	m.lastEditKind = editNone
-}
-
-// openFile opens path, but first asks for confirmation (via promptConfirmDiscard)
-// if the current buffer has unsaved changes that would otherwise be silently
-// discarded.
-func (m *Model) openFile(path string) {
-	if m.buf.Dirty() {
-		m.prompt = promptConfirmDiscard
-		m.pendingOpenPath = path
-		m.status = "unsaved changes in " + m.displayFilename() + " -- discard and open? (y/n)"
-		return
-	}
-	m.reallyOpenFile(path)
-}
-
-func (m *Model) reallyOpenFile(path string) {
-	buf, err := buffer.LoadFile(path)
-	if err != nil {
-		m.status = "open failed: " + err.Error()
-		return
-	}
-	m.buf = buf
-	m.filename = path
-	m.undoStack = nil
-	m.redoStack = nil
-	m.lastEditKind = editNone
-	m.editorView.ScrollLine, m.editorView.ScrollCol = 0, 0
-	m.focus = FocusEditor
-	m.status = "opened " + path
 }

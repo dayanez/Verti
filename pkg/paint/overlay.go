@@ -2,7 +2,7 @@ package paint
 
 // Overlay is the paint mode's state machine: whether the modal is active,
 // the in-progress drag (if any), and the canvas being drawn on. It has no
-// dependency on bubbletea or any terminal library — the app layer feeds it
+// dependency on bubbletea or any terminal library; the app layer feeds it
 // plain (column, row) coordinates from mouse events.
 type Overlay struct {
 	Active bool
@@ -58,7 +58,7 @@ func (o *Overlay) Reset() {
 }
 
 // Finish renders the canvas as a language-appropriate comment block for
-// filename, then clears the canvas. It does not change Active — the
+// filename, then clears the canvas. It does not change Active; the
 // caller decides whether finishing a drawing also exits paint mode.
 func (o *Overlay) Finish(filename string) string {
 	art := o.Canvas.Render()

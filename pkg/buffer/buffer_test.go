@@ -3,7 +3,9 @@ package buffer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestInsertAndString(t *testing.T) {
@@ -312,6 +314,87 @@ func TestLoadFileWithLFOnlySavesAsLF(t *testing.T) {
 	}
 	if got := string(raw); got != "one\ntwo" {
 		t.Fatalf("saved file = %q, want LF preserved (no CRLF introduced)", got)
+	}
+}
+
+func TestSaveFileRecreatesWithOriginalPermissionsIfFileWasRemoved(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+	if err := os.WriteFile(path, []byte("echo hi"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	wantPerm := before.Mode().Perm()
+
+	gb, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	// Removing the file simulates the case a hardcoded 0o644 would get
+	// wrong: SaveFile has to recreate it, and should use the permissions
+	// it was originally loaded with rather than a blanket default.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if err := gb.SaveFile(path); err != nil {
+		t.Fatalf("SaveFile: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat after save: %v", err)
+	}
+	if got := after.Mode().Perm(); got != wantPerm {
+		t.Fatalf("recreated file permissions = %o, want %o (the originally loaded file's mode)", got, wantPerm)
+	}
+}
+
+func TestNewFromStringAndLoadFileStartNotDirty(t *testing.T) {
+	if NewFromString("hello").Dirty() {
+		t.Error("NewFromString(...).Dirty() = true, want false: loading content is construction, not an edit")
+	}
+	if NewFromString("").Dirty() {
+		t.Error("NewFromString(\"\").Dirty() = true, want false")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	gb, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if gb.Dirty() {
+		t.Error("LoadFile(...).Dirty() = true, want false immediately after loading")
+	}
+
+	gb.InsertRune('x')
+	if !gb.Dirty() {
+		t.Error("Dirty() = false after an actual edit, want true")
+	}
+}
+
+func TestLargeInsertDoesNotDegradeQuadratically(t *testing.T) {
+	text := strings.Repeat("x", 500_000)
+	start := time.Now()
+	gb := NewFromString(text)
+	elapsed := time.Since(start)
+
+	if gb.Len() != 500_000 {
+		t.Fatalf("Len() = %d, want 500000", gb.Len())
+	}
+	// growGap grows the gap geometrically (like append()'s amortized-O(1)
+	// strategy). A prior version grew it by a fixed small increment
+	// instead, which re-copied the whole buffer roughly every 64
+	// characters: loading a 3.9MB file that way took over 40 seconds.
+	// Half a million characters should complete in well under a second.
+	if elapsed > 2*time.Second {
+		t.Fatalf("NewFromString(500_000 chars) took %v, want well under 2s (possible O(n^2) regression in growGap)", elapsed)
 	}
 }
 
