@@ -5,15 +5,28 @@ import (
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/bash"
 	"github.com/smacker/go-tree-sitter/c"
 	"github.com/smacker/go-tree-sitter/cpp"
+	"github.com/smacker/go-tree-sitter/csharp"
+	"github.com/smacker/go-tree-sitter/css"
+	"github.com/smacker/go-tree-sitter/dockerfile"
 	"github.com/smacker/go-tree-sitter/golang"
+	"github.com/smacker/go-tree-sitter/html"
+	"github.com/smacker/go-tree-sitter/java"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/kotlin"
 	"github.com/smacker/go-tree-sitter/lua"
 	tsmarkdown "github.com/smacker/go-tree-sitter/markdown/tree-sitter-markdown"
+	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
+	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
+	"github.com/smacker/go-tree-sitter/sql"
+	"github.com/smacker/go-tree-sitter/swift"
+	"github.com/smacker/go-tree-sitter/toml"
 	tstypescript "github.com/smacker/go-tree-sitter/typescript/typescript"
+	"github.com/smacker/go-tree-sitter/yaml"
 )
 
 // registerTreeSitterLanguages wires every bundled tree-sitter grammar into
@@ -34,6 +47,26 @@ func registerTreeSitterLanguages(r *Registry) {
 	r.Register(".lua", func() Highlighter { return newASTHighlighter(lua.GetLanguage(), luaKeywords) })
 	r.Register(".md", func() Highlighter { return newMarkdownHighlighter() })
 	r.Register(".markdown", func() Highlighter { return newMarkdownHighlighter() })
+
+	r.Register(".sh", func() Highlighter { return newASTHighlighter(bash.GetLanguage(), bashKeywords) })
+	r.Register(".bash", func() Highlighter { return newASTHighlighter(bash.GetLanguage(), bashKeywords) })
+	r.Register(".css", func() Highlighter { return newASTHighlighter(css.GetLanguage(), cssKeywords) })
+	r.Register(".html", func() Highlighter { return newASTHighlighter(html.GetLanguage(), htmlKeywords) })
+	r.Register(".htm", func() Highlighter { return newASTHighlighter(html.GetLanguage(), htmlKeywords) })
+	r.Register(".yml", func() Highlighter { return newASTHighlighter(yaml.GetLanguage(), yamlTomlKeywords) })
+	r.Register(".yaml", func() Highlighter { return newASTHighlighter(yaml.GetLanguage(), yamlTomlKeywords) })
+	r.Register(".toml", func() Highlighter { return newASTHighlighter(toml.GetLanguage(), yamlTomlKeywords) })
+	r.Register(".rb", func() Highlighter { return newASTHighlighter(ruby.GetLanguage(), rubyKeywords) })
+	r.Register(".java", func() Highlighter { return newASTHighlighter(java.GetLanguage(), javaKeywords) })
+	r.Register(".php", func() Highlighter { return newASTHighlighter(php.GetLanguage(), phpKeywords) })
+	r.Register(".sql", func() Highlighter { return newASTHighlighter(sql.GetLanguage(), sqlKeywords) })
+	r.Register(".cs", func() Highlighter { return newASTHighlighter(csharp.GetLanguage(), csharpKeywords) })
+	r.Register(".kt", func() Highlighter { return newASTHighlighter(kotlin.GetLanguage(), kotlinKeywords) })
+	r.Register(".kts", func() Highlighter { return newASTHighlighter(kotlin.GetLanguage(), kotlinKeywords) })
+	r.Register(".swift", func() Highlighter { return newASTHighlighter(swift.GetLanguage(), swiftKeywords) })
+	// Dockerfile has no conventional extension, so it's matched by exact
+	// (lowercased) filename instead -- see Registry.For.
+	r.Register("dockerfile", func() Highlighter { return newASTHighlighter(dockerfile.GetLanguage(), dockerfileKeywords) })
 }
 
 // astHighlighter classifies tokens by walking the leaves of a tree-sitter
@@ -201,6 +234,134 @@ var luaKeywords = map[string]Kind{
 	"do": KindKeyword, "repeat": KindKeyword, "until": KindKeyword, "break": KindKeyword, "in": KindKeyword,
 	"and": KindKeyword, "or": KindKeyword, "not": KindKeyword,
 	"nil": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var bashKeywords = map[string]Kind{
+	"if": KindKeyword, "then": KindKeyword, "else": KindKeyword, "elif": KindKeyword, "fi": KindKeyword,
+	"for": KindKeyword, "while": KindKeyword, "until": KindKeyword, "do": KindKeyword, "done": KindKeyword,
+	"case": KindKeyword, "esac": KindKeyword, "function": KindKeyword, "return": KindKeyword,
+	"break": KindKeyword, "continue": KindKeyword, "in": KindKeyword, "select": KindKeyword,
+	"local": KindKeyword, "export": KindKeyword, "readonly": KindKeyword, "declare": KindKeyword,
+}
+
+// cssKeywords is intentionally small: CSS's grammar doesn't have
+// "keywords" in the C sense, so classifyNamed's generic handling of
+// strings, comments, and numbers already covers most of it.
+var cssKeywords = map[string]Kind{
+	"important": KindKeyword,
+}
+
+// htmlKeywords is empty -- HTML has no keyword tokens; classifyNamed's
+// generic string/comment handling covers attribute values and comments,
+// and tag/attribute names render as plain text via newASTHighlighter.
+var htmlKeywords = map[string]Kind{}
+
+// yamlTomlKeywords covers both grammars' boolean/null scalars, which are
+// their closest equivalent to a "keyword".
+var yamlTomlKeywords = map[string]Kind{
+	"true": KindConstant, "false": KindConstant, "null": KindConstant,
+	"yes": KindConstant, "no": KindConstant,
+}
+
+var rubyKeywords = map[string]Kind{
+	"def": KindKeyword, "end": KindKeyword, "if": KindKeyword, "elsif": KindKeyword, "else": KindKeyword,
+	"unless": KindKeyword, "while": KindKeyword, "until": KindKeyword, "for": KindKeyword, "in": KindKeyword,
+	"do": KindKeyword, "class": KindKeyword, "module": KindKeyword, "return": KindKeyword, "yield": KindKeyword,
+	"begin": KindKeyword, "rescue": KindKeyword, "ensure": KindKeyword, "raise": KindKeyword,
+	"break": KindKeyword, "next": KindKeyword, "redo": KindKeyword, "retry": KindKeyword,
+	"require": KindKeyword, "require_relative": KindKeyword, "attr_accessor": KindKeyword,
+	"and": KindKeyword, "or": KindKeyword, "not": KindKeyword,
+	"self": KindConstant, "nil": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var javaKeywords = map[string]Kind{
+	"public": KindKeyword, "private": KindKeyword, "protected": KindKeyword, "class": KindKeyword,
+	"interface": KindKeyword, "extends": KindKeyword, "implements": KindKeyword, "static": KindKeyword,
+	"final": KindKeyword, "abstract": KindKeyword, "synchronized": KindKeyword, "volatile": KindKeyword,
+	"transient": KindKeyword, "enum": KindKeyword, "new": KindKeyword, "return": KindKeyword,
+	"if": KindKeyword, "else": KindKeyword, "for": KindKeyword, "while": KindKeyword, "do": KindKeyword,
+	"switch": KindKeyword, "case": KindKeyword, "default": KindKeyword, "break": KindKeyword, "continue": KindKeyword,
+	"try": KindKeyword, "catch": KindKeyword, "finally": KindKeyword, "throw": KindKeyword, "throws": KindKeyword,
+	"import": KindKeyword, "package": KindKeyword, "this": KindConstant, "super": KindKeyword,
+	"void": KindType, "int": KindType, "long": KindType, "short": KindType, "byte": KindType,
+	"char": KindType, "float": KindType, "double": KindType, "boolean": KindType,
+	"null": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var phpKeywords = map[string]Kind{
+	"function": KindKeyword, "return": KindKeyword, "if": KindKeyword, "else": KindKeyword, "elseif": KindKeyword,
+	"endif": KindKeyword, "foreach": KindKeyword, "for": KindKeyword, "while": KindKeyword, "do": KindKeyword,
+	"switch": KindKeyword, "case": KindKeyword, "default": KindKeyword, "break": KindKeyword, "continue": KindKeyword,
+	"class": KindKeyword, "interface": KindKeyword, "extends": KindKeyword, "implements": KindKeyword,
+	"public": KindKeyword, "private": KindKeyword, "protected": KindKeyword, "static": KindKeyword, "new": KindKeyword,
+	"try": KindKeyword, "catch": KindKeyword, "finally": KindKeyword, "throw": KindKeyword,
+	"namespace": KindKeyword, "use": KindKeyword, "require": KindKeyword, "require_once": KindKeyword,
+	"include": KindKeyword, "include_once": KindKeyword, "echo": KindKeyword, "print": KindKeyword,
+	"as": KindKeyword, "global": KindKeyword, "const": KindKeyword,
+	"true": KindConstant, "false": KindConstant, "null": KindConstant,
+}
+
+// sqlKeywords includes both cases since SQL is conventionally
+// case-insensitive and files vary between ALL CAPS and lowercase style.
+var sqlKeywords = map[string]Kind{
+	"select": KindKeyword, "SELECT": KindKeyword, "from": KindKeyword, "FROM": KindKeyword,
+	"where": KindKeyword, "WHERE": KindKeyword, "insert": KindKeyword, "INSERT": KindKeyword,
+	"into": KindKeyword, "INTO": KindKeyword, "values": KindKeyword, "VALUES": KindKeyword,
+	"update": KindKeyword, "UPDATE": KindKeyword, "set": KindKeyword, "SET": KindKeyword,
+	"delete": KindKeyword, "DELETE": KindKeyword, "create": KindKeyword, "CREATE": KindKeyword,
+	"table": KindKeyword, "TABLE": KindKeyword, "alter": KindKeyword, "ALTER": KindKeyword,
+	"drop": KindKeyword, "DROP": KindKeyword, "join": KindKeyword, "JOIN": KindKeyword,
+	"left": KindKeyword, "LEFT": KindKeyword, "right": KindKeyword, "RIGHT": KindKeyword,
+	"inner": KindKeyword, "INNER": KindKeyword, "outer": KindKeyword, "OUTER": KindKeyword,
+	"on": KindKeyword, "ON": KindKeyword, "group": KindKeyword, "GROUP": KindKeyword,
+	"order": KindKeyword, "ORDER": KindKeyword, "by": KindKeyword, "BY": KindKeyword,
+	"having": KindKeyword, "HAVING": KindKeyword, "limit": KindKeyword, "LIMIT": KindKeyword,
+	"and": KindKeyword, "AND": KindKeyword, "or": KindKeyword, "OR": KindKeyword, "not": KindKeyword, "NOT": KindKeyword,
+	"as": KindKeyword, "AS": KindKeyword, "distinct": KindKeyword, "DISTINCT": KindKeyword,
+	"null": KindConstant, "NULL": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var csharpKeywords = map[string]Kind{
+	"public": KindKeyword, "private": KindKeyword, "protected": KindKeyword, "internal": KindKeyword,
+	"class": KindKeyword, "interface": KindKeyword, "namespace": KindKeyword, "using": KindKeyword,
+	"static": KindKeyword, "new": KindKeyword, "return": KindKeyword, "if": KindKeyword, "else": KindKeyword,
+	"for": KindKeyword, "foreach": KindKeyword, "while": KindKeyword, "do": KindKeyword, "switch": KindKeyword,
+	"case": KindKeyword, "default": KindKeyword, "break": KindKeyword, "continue": KindKeyword,
+	"try": KindKeyword, "catch": KindKeyword, "finally": KindKeyword, "throw": KindKeyword,
+	"async": KindKeyword, "await": KindKeyword, "override": KindKeyword, "virtual": KindKeyword,
+	"abstract": KindKeyword, "readonly": KindKeyword, "const": KindKeyword, "enum": KindKeyword, "struct": KindKeyword,
+	"void": KindType, "int": KindType, "string": KindType, "bool": KindType, "var": KindType,
+	"null": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var kotlinKeywords = map[string]Kind{
+	"fun": KindKeyword, "val": KindKeyword, "var": KindKeyword, "return": KindKeyword, "if": KindKeyword,
+	"else": KindKeyword, "when": KindKeyword, "for": KindKeyword, "while": KindKeyword, "do": KindKeyword,
+	"class": KindKeyword, "interface": KindKeyword, "object": KindKeyword, "package": KindKeyword,
+	"import": KindKeyword, "is": KindKeyword, "in": KindKeyword, "as": KindKeyword,
+	"override": KindKeyword, "public": KindKeyword, "private": KindKeyword, "protected": KindKeyword,
+	"internal": KindKeyword, "companion": KindKeyword, "init": KindKeyword,
+	"try": KindKeyword, "catch": KindKeyword, "finally": KindKeyword, "throw": KindKeyword,
+	"this": KindConstant, "super": KindKeyword, "null": KindConstant, "true": KindConstant, "false": KindConstant,
+}
+
+var swiftKeywords = map[string]Kind{
+	"func": KindKeyword, "var": KindKeyword, "let": KindKeyword, "return": KindKeyword, "if": KindKeyword,
+	"else": KindKeyword, "guard": KindKeyword, "for": KindKeyword, "while": KindKeyword, "repeat": KindKeyword,
+	"switch": KindKeyword, "case": KindKeyword, "default": KindKeyword, "class": KindKeyword, "struct": KindKeyword,
+	"enum": KindKeyword, "protocol": KindKeyword, "extension": KindKeyword, "import": KindKeyword,
+	"public": KindKeyword, "private": KindKeyword, "internal": KindKeyword, "fileprivate": KindKeyword,
+	"open": KindKeyword, "static": KindKeyword, "init": KindKeyword,
+	"try": KindKeyword, "catch": KindKeyword, "throw": KindKeyword, "throws": KindKeyword,
+	"self": KindConstant, "super": KindKeyword, "nil": KindConstant, "true": KindConstant, "false": KindConstant,
+	"as": KindKeyword, "is": KindKeyword, "in": KindKeyword,
+}
+
+var dockerfileKeywords = map[string]Kind{
+	"FROM": KindKeyword, "RUN": KindKeyword, "CMD": KindKeyword, "LABEL": KindKeyword, "EXPOSE": KindKeyword,
+	"ENV": KindKeyword, "ADD": KindKeyword, "COPY": KindKeyword, "ENTRYPOINT": KindKeyword, "VOLUME": KindKeyword,
+	"USER": KindKeyword, "WORKDIR": KindKeyword, "ARG": KindKeyword, "ONBUILD": KindKeyword, "STOPSIGNAL": KindKeyword,
+	"HEALTHCHECK": KindKeyword, "SHELL": KindKeyword, "AS": KindKeyword,
 }
 
 // markdownHighlighter classifies whole composite nodes (headings, code

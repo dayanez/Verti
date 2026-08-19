@@ -10,37 +10,49 @@ type CommentStyle struct {
 }
 
 var commentStyles = map[string]CommentStyle{
-	".go":   {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".c":    {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".h":    {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".cpp":  {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".cc":   {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".hpp":  {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".js":   {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".jsx":  {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".ts":   {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".tsx":  {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".rs":   {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".java": {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
-	".css":  {BlockStart: "/*", BlockEnd: "*/"},
-	".py":   {Line: "#"},
-	".rb":   {Line: "#"},
-	".sh":   {Line: "#"},
-	".bash": {Line: "#"},
-	".yaml": {Line: "#"},
-	".yml":  {Line: "#"},
-	".toml": {Line: "#"},
-	".lua":  {Line: "--", BlockStart: "--[[", BlockEnd: "]]"},
-	".sql":  {Line: "--"},
-	".html": {BlockStart: "<!--", BlockEnd: "-->"},
-	".xml":  {BlockStart: "<!--", BlockEnd: "-->"},
-	".md":   {BlockStart: "<!--", BlockEnd: "-->"},
-	".json": {Line: "//"}, // JSON has no real comment syntax; harmless best-effort default
+	".go":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".c":         {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".h":         {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".cpp":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".cc":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".hpp":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".js":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".jsx":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".ts":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".tsx":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".rs":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".java":      {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".css":       {BlockStart: "/*", BlockEnd: "*/"},
+	".py":        {Line: "#"},
+	".rb":        {Line: "#"},
+	".sh":        {Line: "#"},
+	".bash":      {Line: "#"},
+	".yaml":      {Line: "#"},
+	".yml":       {Line: "#"},
+	".toml":      {Line: "#"},
+	".lua":       {Line: "--", BlockStart: "--[[", BlockEnd: "]]"},
+	".sql":       {Line: "--"},
+	".html":      {BlockStart: "<!--", BlockEnd: "-->"},
+	".htm":       {BlockStart: "<!--", BlockEnd: "-->"},
+	".xml":       {BlockStart: "<!--", BlockEnd: "-->"},
+	".md":        {BlockStart: "<!--", BlockEnd: "-->"},
+	".json":      {Line: "//"}, // JSON has no real comment syntax; harmless best-effort default
+	".kt":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".kts":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".swift":     {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".cs":        {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	".php":       {Line: "//", BlockStart: "/*", BlockEnd: "*/"},
+	"dockerfile": {Line: "#"},
 }
 
-// StyleForFile returns the comment style for filename's extension, falling
-// back to C-style line comments for unrecognized extensions.
+// StyleForFile returns the comment style for filename, checked first as an
+// exact (lowercased) filename -- so extension-less conventions like
+// "Dockerfile" resolve correctly -- then by extension, falling back to
+// C-style line comments for anything unrecognized.
 func StyleForFile(filename string) CommentStyle {
+	if style, ok := commentStyles[strings.ToLower(filename)]; ok {
+		return style
+	}
 	if style, ok := commentStyles[extOf(filename)]; ok {
 		return style
 	}

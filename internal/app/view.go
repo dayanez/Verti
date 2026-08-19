@@ -122,6 +122,9 @@ func (m *Model) renderStatusBar() string {
 	line, col := m.buf.CursorLineCol()
 
 	left := fmt.Sprintf(" %s%s — %s", name, dirty, m.status)
+	if label, ok := promptLabels[m.prompt]; ok {
+		left = fmt.Sprintf(" %s%s_", label, m.promptText)
+	}
 	right := fmt.Sprintf("%s  Ln %d, Col %d ", focusLabel, line+1, col+1)
 
 	pad := m.width - runeLen(left) - runeLen(right)

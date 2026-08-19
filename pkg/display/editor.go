@@ -33,6 +33,7 @@ type Theme struct {
 	Heading     lipgloss.Style
 	LineNumber  lipgloss.Style
 	Cursor      lipgloss.Style
+	Selection   lipgloss.Style
 }
 
 // DefaultTheme returns the editor's built-in color scheme.
@@ -52,6 +53,7 @@ func DefaultTheme() Theme {
 		Heading:     lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Underline(true),
 		LineNumber:  lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		Cursor:      lipgloss.NewStyle().Reverse(true),
+		Selection:   lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255")),
 	}
 }
 
@@ -148,6 +150,13 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 	lines := buf.Lines()
 	cursorLine, cursorCol := buf.CursorLineCol()
 	gutterW := gutterWidth(len(lines))
+
+	selStart, selEnd, hasSel := buf.Selection()
+	var selStartLine, selStartCol, selEndLine, selEndCol int
+	if hasSel {
+		selStartLine, selStartCol = buf.OffsetLineCol(selStart)
+		selEndLine, selEndCol = buf.OffsetLineCol(selEnd)
+	}
 	visibleWidth := e.Width - gutterW
 	if visibleWidth < 1 {
 		visibleWidth = 1
@@ -183,8 +192,18 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 
 	rows := make([]string, 0, e.Height)
 	for i := e.ScrollLine; i < end; i++ {
+		selFrom, selTo := -1, -1
+		if hasSel && i >= selStartLine && i <= selEndLine {
+			selFrom, selTo = 0, len([]rune(lines[i]))
+			if i == selStartLine {
+				selFrom = selStartCol
+			}
+			if i == selEndLine {
+				selTo = selEndCol
+			}
+		}
 		gutter := e.Theme.LineNumber.Width(gutterW - 1).Align(lipgloss.Right).Render(strconv.Itoa(i + 1))
-		rows = append(rows, gutter+" "+e.renderLine(lines[i], lineStartByte[i], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth))
+		rows = append(rows, gutter+" "+e.renderLine(lines[i], lineStartByte[i], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth, selFrom, selTo))
 	}
 	for len(rows) < e.Height {
 		rows = append(rows, e.Theme.LineNumber.Width(gutterW-1).Align(lipgloss.Right).Render("~")+" ")
@@ -192,20 +211,28 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 	return strings.Join(rows, "\n")
 }
 
-func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token, tIdx *int, isCursorLine bool, cursorCol, visibleWidth int) string {
+// renderLine draws one line. selFrom/selTo are the rune-column bounds of
+// the active selection on this line ([-1, -1] if none on this line);
+// selection styling takes precedence over syntax highlighting, but the
+// cursor cell always wins over both.
+func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token, tIdx *int, isCursorLine bool, cursorCol, visibleWidth, selFrom, selTo int) string {
 	runes := []rune(line)
 	var out strings.Builder
 	var run strings.Builder
 	runKind := highlight.KindDefault
 	runIsCursor := false
+	runIsSelected := false
 
 	flush := func() {
 		if run.Len() == 0 {
 			return
 		}
-		if runIsCursor {
+		switch {
+		case runIsCursor:
 			out.WriteString(e.Theme.Cursor.Render(run.String()))
-		} else {
+		case runIsSelected:
+			out.WriteString(e.Theme.Selection.Render(run.String()))
+		default:
 			out.WriteString(e.Theme.styleFor(runKind).Render(run.String()))
 		}
 		run.Reset()
@@ -223,6 +250,7 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 			kind = tokens[*tIdx].Kind
 		}
 		isCursor := isCursorLine && j == cursorCol
+		isSelected := selFrom >= 0 && j >= selFrom && j < selTo
 
 		if j < e.ScrollCol {
 			byteOff += rl
@@ -232,10 +260,10 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 			break
 		}
 
-		if run.Len() > 0 && (isCursor != runIsCursor || (!isCursor && kind != runKind)) {
+		if run.Len() > 0 && (isCursor != runIsCursor || isSelected != runIsSelected || (!isCursor && !isSelected && kind != runKind)) {
 			flush()
 		}
-		runKind, runIsCursor = kind, isCursor
+		runKind, runIsCursor, runIsSelected = kind, isCursor, isSelected
 		run.WriteRune(r)
 		rendered++
 		byteOff += rl

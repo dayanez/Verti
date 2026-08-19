@@ -1,10 +1,15 @@
 package app
 
 import (
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/termenv"
+
+	"github.com/dommcpro/verti/pkg/paint"
 )
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -12,6 +17,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.paintOverlay.Active {
 		return m.handlePaintKey(msg, chord)
+	}
+
+	if m.prompt != promptNone {
+		return m.handlePromptKey(msg, chord)
 	}
 
 	// When the subshell pane has focus, almost every keystroke — including
@@ -80,7 +89,9 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 
 	case "save":
 		if m.filename == "" {
-			m.status = "nothing to save: open a file first"
+			m.prompt = promptSaveAs
+			m.promptText = ""
+			m.focus = FocusEditor
 			return m, nil
 		}
 		if err := m.buf.SaveFile(m.filename); err != nil {
@@ -98,6 +109,54 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		m.redo()
 		return m, nil
 
+	case "copy":
+		m.copySelectionOrLine()
+		return m, nil
+
+	case "cut":
+		m.cutSelectionOrLine()
+		return m, nil
+
+	case "paste":
+		m.pasteClipboard()
+		return m, nil
+
+	case "find":
+		m.prompt = promptFind
+		m.promptText = ""
+		m.focus = FocusEditor
+		return m, nil
+
+	case "goto_line":
+		m.prompt = promptGoto
+		m.promptText = ""
+		m.focus = FocusEditor
+		return m, nil
+
+	case "duplicate_line":
+		m.duplicateLine()
+		return m, nil
+
+	case "delete_line":
+		m.deleteLine()
+		return m, nil
+
+	case "replace":
+		m.prompt = promptReplaceFind
+		m.promptText = ""
+		m.focus = FocusEditor
+		return m, nil
+
+	case "save_as":
+		m.prompt = promptSaveAs
+		m.promptText = m.filename
+		m.focus = FocusEditor
+		return m, nil
+
+	case "toggle_comment":
+		m.toggleComment()
+		return m, nil
+
 	case "quit":
 		m.quitting = true
 		_ = m.term.Close()
@@ -110,52 +169,595 @@ func (m *Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyRunes:
 		m.recordUndoBoundary(editInsert)
+		m.buf.DeleteSelection() // no-op if nothing selected; makes typing replace a selection
 		m.buf.InsertString(string(msg.Runes))
 	case tea.KeySpace:
 		m.recordUndoBoundary(editInsert)
+		m.buf.DeleteSelection()
 		m.buf.InsertRune(' ')
 	case tea.KeyEnter:
 		m.recordUndoBoundary(editInsert)
-		m.buf.InsertRune('\n')
+		m.buf.DeleteSelection()
+		m.buf.InsertString("\n" + m.currentLineIndent())
 	case tea.KeyTab:
-		m.recordUndoBoundary(editInsert)
-		m.buf.InsertString(strings.Repeat(" ", tabWidthOrDefault(m.cfg.TabWidth)))
+		if m.selectionSpansMultipleLines() {
+			m.indentSelection()
+		} else {
+			m.recordUndoBoundary(editInsert)
+			m.buf.DeleteSelection()
+			m.buf.InsertString(strings.Repeat(" ", tabWidthOrDefault(m.cfg.TabWidth)))
+		}
+	case tea.KeyShiftTab:
+		if m.selectionSpansMultipleLines() {
+			m.outdentSelection()
+		} else {
+			m.outdentCurrentLine()
+		}
 	case tea.KeyBackspace:
 		m.recordUndoBoundary(editDelete)
-		m.buf.DeleteBackward()
+		if !m.buf.HasSelection() {
+			m.buf.DeleteBackward()
+		} else {
+			m.buf.DeleteSelection()
+		}
 	case tea.KeyDelete:
 		m.recordUndoBoundary(editDelete)
-		m.buf.DeleteForward()
+		if !m.buf.HasSelection() {
+			m.buf.DeleteForward()
+		} else {
+			m.buf.DeleteSelection()
+		}
 	case tea.KeyUp:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveUp()
 	case tea.KeyDown:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveDown()
 	case tea.KeyLeft:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveLeft()
 	case tea.KeyRight:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveRight()
+	case tea.KeyCtrlLeft:
+		m.buf.ClearSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveWordLeft()
+	case tea.KeyCtrlRight:
+		m.buf.ClearSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveWordRight()
+	case tea.KeyCtrlShiftLeft:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveWordLeft()
+	case tea.KeyCtrlShiftRight:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveWordRight()
 	case tea.KeyHome:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveHome()
 	case tea.KeyEnd:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		m.buf.MoveEnd()
 	case tea.KeyPgUp:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		for i := 0; i < m.editorView.Height; i++ {
 			m.buf.MoveUp()
 		}
 	case tea.KeyPgDown:
+		m.buf.ClearSelection()
 		m.lastEditKind = editNone
 		for i := 0; i < m.editorView.Height; i++ {
 			m.buf.MoveDown()
 		}
+	case tea.KeyShiftUp:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveUp()
+	case tea.KeyShiftDown:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveDown()
+	case tea.KeyShiftLeft:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveLeft()
+	case tea.KeyShiftRight:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveRight()
+	case tea.KeyShiftHome:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveHome()
+	case tea.KeyShiftEnd:
+		m.buf.StartSelection()
+		m.lastEditKind = editNone
+		m.buf.MoveEnd()
 	}
 	return m, nil
+}
+
+// copySelectionOrLine copies the active selection to the clipboard, or the
+// current line (micro/VS Code's "nothing selected" fallback) if none.
+func (m *Model) copySelectionOrLine() {
+	text := m.buf.SelectedText()
+	if text == "" {
+		start, end := m.buf.CurrentLineRange()
+		text = m.buf.TextRange(start, end)
+	}
+	if text == "" {
+		return
+	}
+	m.setClipboard(text)
+	m.status = "copied"
+}
+
+// cutSelectionOrLine cuts the active selection, or the current line if none.
+func (m *Model) cutSelectionOrLine() {
+	text := m.buf.SelectedText()
+	if text != "" {
+		m.recordUndoBoundary(editDelete)
+		m.buf.DeleteSelection()
+	} else {
+		start, end := m.buf.CurrentLineRange()
+		text = m.buf.TextRange(start, end)
+		if text == "" {
+			return
+		}
+		m.recordUndoBoundary(editDelete)
+		m.buf.DeleteRange(start, end)
+	}
+	m.setClipboard(text)
+	m.status = "cut"
+}
+
+// pasteClipboard inserts the clipboard's contents at the cursor, replacing
+// the active selection if any.
+func (m *Model) pasteClipboard() {
+	if m.clipboard == "" {
+		return
+	}
+	m.recordUndoBoundary(editInsert)
+	m.buf.DeleteSelection()
+	m.buf.InsertString(m.clipboard)
+	m.status = "pasted"
+}
+
+// setClipboard stores text in Verti's own clipboard register (used by
+// paste) and best-effort mirrors it to the OS clipboard via an OSC52
+// escape sequence, which modern terminal emulators intercept — this works
+// over SSH and tmux too, without any platform-specific clipboard code.
+// There's no equivalent read path: OSC52 clipboard queries aren't reliably
+// supported, so paste always reads from Verti's own register instead.
+func (m *Model) setClipboard(text string) {
+	m.clipboard = text
+	termenv.Copy(text)
+}
+
+// handlePromptKey handles input while a status-bar prompt (find, go-to-line,
+// or the unsaved-changes confirm) owns the keyboard, intercepted before any
+// other key routing.
+func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cmd) {
+	if m.prompt == promptConfirmDiscard {
+		switch chord {
+		case "y", "Y":
+			m.reallyOpenFile(m.pendingOpenPath)
+		case "n", "N", "esc":
+			m.status = "open canceled"
+		}
+		m.pendingOpenPath = ""
+		m.prompt = promptNone
+		return m, nil
+	}
+
+	switch {
+	case chord == "esc":
+		m.prompt = promptNone
+		m.promptText = ""
+		m.replaceFindTerm = ""
+	case msg.Type == tea.KeyEnter:
+		switch m.prompt {
+		case promptFind:
+			m.findNext(m.promptText)
+		case promptGoto:
+			m.gotoLine(m.promptText)
+			m.prompt = promptNone
+			m.promptText = ""
+		case promptReplaceFind:
+			if m.promptText != "" {
+				m.replaceFindTerm = m.promptText
+				m.promptText = ""
+				m.prompt = promptReplaceWith
+			}
+		case promptReplaceWith:
+			m.replaceAll(m.replaceFindTerm, m.promptText)
+			m.prompt = promptNone
+			m.promptText = ""
+			m.replaceFindTerm = ""
+		case promptSaveAs:
+			m.saveAs(m.promptText)
+			m.prompt = promptNone
+			m.promptText = ""
+		}
+	case msg.Type == tea.KeyBackspace:
+		if r := []rune(m.promptText); len(r) > 0 {
+			m.promptText = string(r[:len(r)-1])
+		}
+	case msg.Type == tea.KeySpace:
+		m.promptText += " "
+	case msg.Type == tea.KeyRunes:
+		m.promptText += string(msg.Runes)
+	}
+	return m, nil
+}
+
+// findNext selects the next occurrence of query after the cursor, wrapping
+// around to the start of the buffer if nothing is found before the end.
+// Called on every Enter while the find prompt is open, so repeating Enter
+// steps through matches.
+func (m *Model) findNext(query string) {
+	if query == "" {
+		return
+	}
+	text := []rune(m.buf.String())
+	needle := []rune(query)
+	if idx := indexRunes(text, needle, m.buf.CursorOffset()); idx >= 0 {
+		m.buf.SelectRange(idx, idx+len(needle))
+		m.status = fmt.Sprintf("found %q", query)
+		return
+	}
+	if idx := indexRunes(text, needle, 0); idx >= 0 {
+		m.buf.SelectRange(idx, idx+len(needle))
+		m.status = fmt.Sprintf("found %q (wrapped)", query)
+		return
+	}
+	m.status = fmt.Sprintf("not found: %q", query)
+}
+
+// indexRunes returns the offset of needle's first occurrence in haystack at
+// or after from, or -1 if there isn't one.
+func indexRunes(haystack, needle []rune, from int) int {
+	if from < 0 {
+		from = 0
+	}
+	if len(needle) == 0 || from > len(haystack)-len(needle) {
+		return -1
+	}
+outer:
+	for i := from; i <= len(haystack)-len(needle); i++ {
+		for j, r := range needle {
+			if haystack[i+j] != r {
+				continue outer
+			}
+		}
+		return i
+	}
+	return -1
+}
+
+// gotoLine moves the cursor to the start of the 1-based line number in
+// input, clamped to the buffer's line range.
+func (m *Model) gotoLine(input string) {
+	n, err := strconv.Atoi(strings.TrimSpace(input))
+	if err != nil {
+		m.status = "invalid line: " + input
+		return
+	}
+	m.buf.ClearSelection()
+	m.buf.MoveCursorTo(m.buf.LineOffset(n - 1))
+	line, _ := m.buf.CursorLineCol()
+	m.status = fmt.Sprintf("line %d", line+1)
+}
+
+// duplicateLine inserts a copy of the line under the cursor directly below
+// it, leaving the cursor on the new copy at the same column.
+func (m *Model) duplicateLine() {
+	start, end := m.buf.CurrentLineRange()
+	lineText := m.buf.TextRange(start, end)
+	if lineText == "" {
+		return
+	}
+	_, col := m.buf.CursorLineCol()
+
+	insert := lineText
+	target := end + col
+	if !strings.HasSuffix(lineText, "\n") {
+		insert = "\n" + lineText
+		target = end + 1 + col
+	}
+
+	m.recordUndoBoundary(editInsert)
+	m.buf.MoveCursorTo(end)
+	m.buf.InsertString(insert)
+	m.buf.MoveCursorTo(target)
+	m.lastEditKind = editNone
+}
+
+// deleteLine removes the line under the cursor entirely, without touching
+// the clipboard — a quick way to drop a line without clobbering whatever
+// was last copied or cut.
+func (m *Model) deleteLine() {
+	start, end := m.buf.CurrentLineRange()
+	if m.buf.TextRange(start, end) == "" {
+		return
+	}
+	m.recordUndoBoundary(editDelete)
+	m.buf.DeleteRange(start, end)
+	m.lastEditKind = editNone
+}
+
+// currentLineIndent returns the leading spaces/tabs of the line under the
+// cursor, used to carry indentation forward onto a new line on Enter.
+func (m *Model) currentLineIndent() string {
+	start, end := m.buf.CurrentLineRange()
+	line := strings.TrimSuffix(m.buf.TextRange(start, end), "\n")
+	return line[:indentLen(line)]
+}
+
+// indentLen returns the byte length of s's leading run of spaces and tabs.
+// Since that run is always pure ASCII, this doubles as a safe rune offset
+// into s.
+func indentLen(s string) int {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+// lineEndOffset returns the offset just past the given zero-based line's
+// content, including its trailing newline for every line but the last
+// (mirroring CurrentLineRange's convention for the cursor's own line).
+func (m *Model) lineEndOffset(line int) int {
+	if line+1 < m.buf.LineCount() {
+		return m.buf.LineOffset(line + 1)
+	}
+	return m.buf.Len()
+}
+
+// selectionSpansMultipleLines reports whether the active selection covers
+// more than one line, the condition under which Tab/Shift+Tab indent or
+// outdent the whole block instead of acting on a single line.
+func (m *Model) selectionSpansMultipleLines() bool {
+	start, end, ok := m.buf.Selection()
+	if !ok {
+		return false
+	}
+	startLine, _ := m.buf.OffsetLineCol(start)
+	endLine, _ := m.buf.OffsetLineCol(end)
+	return endLine > startLine
+}
+
+// selectedLineRange returns the (inclusive) line indices a multi-line
+// selection touches. A selection that ends exactly at column 0 of a line
+// doesn't count that line as touched -- matching how most editors treat a
+// selection that merely reaches the start of the next line.
+func (m *Model) selectedLineRange() (startLine, endLine int) {
+	start, end, _ := m.buf.Selection()
+	startLine, _ = m.buf.OffsetLineCol(start)
+	var endCol int
+	endLine, endCol = m.buf.OffsetLineCol(end)
+	if endCol == 0 && endLine > startLine {
+		endLine--
+	}
+	return startLine, endLine
+}
+
+// indentSelection adds one tab-width of leading spaces to every line the
+// active multi-line selection touches, then re-selects the (now wider)
+// block so repeated Tab presses keep indenting further.
+func (m *Model) indentSelection() {
+	startLine, endLine := m.selectedLineRange()
+	tab := strings.Repeat(" ", tabWidthOrDefault(m.cfg.TabWidth))
+
+	m.recordUndoBoundary(editInsert)
+	for line := startLine; line <= endLine; line++ {
+		m.buf.MoveCursorTo(m.buf.LineOffset(line))
+		m.buf.InsertString(tab)
+	}
+	m.buf.SelectRange(m.buf.LineOffset(startLine), m.lineEndOffset(endLine))
+	m.lastEditKind = editNone
+}
+
+// outdentSelection removes up to one tab-width of leading spaces from
+// every line the active multi-line selection touches.
+func (m *Model) outdentSelection() {
+	startLine, endLine := m.selectedLineRange()
+	tabWidth := tabWidthOrDefault(m.cfg.TabWidth)
+
+	m.recordUndoBoundary(editDelete)
+	for line := startLine; line <= endLine; line++ {
+		lineStart := m.buf.LineOffset(line)
+		n := leadingSpaces(m.buf.TextRange(lineStart, m.lineEndOffset(line)), tabWidth)
+		if n > 0 {
+			m.buf.DeleteRange(lineStart, lineStart+n)
+		}
+	}
+	m.buf.SelectRange(m.buf.LineOffset(startLine), m.lineEndOffset(endLine))
+	m.lastEditKind = editNone
+}
+
+// outdentCurrentLine removes up to one tab-width of leading spaces from the
+// line under the cursor -- Shift+Tab's behavior when nothing is selected.
+func (m *Model) outdentCurrentLine() {
+	start, end := m.buf.CurrentLineRange()
+	n := leadingSpaces(m.buf.TextRange(start, end), tabWidthOrDefault(m.cfg.TabWidth))
+	if n == 0 {
+		return
+	}
+	m.recordUndoBoundary(editDelete)
+	m.buf.DeleteRange(start, start+n)
+	m.lastEditKind = editNone
+}
+
+// leadingSpaces counts the leading ' ' runes in s, up to max.
+func leadingSpaces(s string, max int) int {
+	r := []rune(s)
+	n := 0
+	for n < len(r) && n < max && r[n] == ' ' {
+		n++
+	}
+	return n
+}
+
+// replaceAll replaces every occurrence of find with replacement across the
+// whole buffer as a single undo step.
+func (m *Model) replaceAll(find, replacement string) {
+	if find == "" {
+		return
+	}
+	text := m.buf.String()
+	count := strings.Count(text, find)
+	if count == 0 {
+		m.status = fmt.Sprintf("not found: %q", find)
+		return
+	}
+	m.recordUndoBoundary(editInsert)
+	m.buf.Restore(strings.ReplaceAll(text, find, replacement), 0)
+	m.lastEditKind = editNone
+	m.status = fmt.Sprintf("replaced %d occurrence(s) of %q", count, find)
+}
+
+// saveAs saves the buffer to path (resolved to an absolute path) and makes
+// it the buffer's filename, so a subsequent plain Ctrl+S writes there too.
+func (m *Model) saveAs(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		m.status = "save canceled: no filename"
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		m.status = "save failed: " + err.Error()
+		return
+	}
+	if err := m.buf.SaveFile(abs); err != nil {
+		m.status = "save failed: " + err.Error()
+		return
+	}
+	m.filename = abs
+	m.status = "saved " + abs
+}
+
+// commentLineRange returns the (inclusive) line range Ctrl+/ should act
+// on: the active selection's lines if there is one, otherwise just the
+// cursor's line.
+func (m *Model) commentLineRange() (startLine, endLine int) {
+	if m.buf.HasSelection() {
+		return m.selectedLineRange()
+	}
+	line, _ := m.buf.CursorLineCol()
+	return line, line
+}
+
+// lineContent returns the given zero-based line's text, excluding its
+// trailing newline.
+func (m *Model) lineContent(line int) string {
+	return strings.TrimSuffix(m.buf.TextRange(m.buf.LineOffset(line), m.lineEndOffset(line)), "\n")
+}
+
+// toggleComment comments or uncomments every line Ctrl+/ targets, using
+// the current file's line-comment syntax (VS Code's behavior) if it has
+// one, or wrapping the range in a single block comment otherwise (CSS,
+// HTML, Markdown). Blank lines in the range are left alone either way.
+func (m *Model) toggleComment() {
+	style := paint.StyleForFile(m.displayFilename())
+	if style.Line == "" {
+		m.toggleBlockComment(style)
+		return
+	}
+
+	hadSelection := m.buf.HasSelection()
+	startLine, endLine := m.commentLineRange()
+	prefix := style.Line
+
+	allCommented, any := true, false
+	for line := startLine; line <= endLine; line++ {
+		trimmed := strings.TrimLeft(m.lineContent(line), " \t")
+		if trimmed == "" {
+			continue
+		}
+		any = true
+		if !strings.HasPrefix(trimmed, prefix) {
+			allCommented = false
+		}
+	}
+	if !any {
+		return
+	}
+
+	m.recordUndoBoundary(editInsert)
+	for line := startLine; line <= endLine; line++ {
+		content := m.lineContent(line)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		lineStart := m.buf.LineOffset(line)
+		indent := indentLen(content)
+		if allCommented {
+			stripLen := len(prefix)
+			if len(content) > indent+len(prefix) && content[indent+len(prefix)] == ' ' {
+				stripLen++
+			}
+			m.buf.DeleteRange(lineStart+indent, lineStart+indent+stripLen)
+		} else {
+			m.buf.MoveCursorTo(lineStart + indent)
+			m.buf.InsertString(prefix + " ")
+		}
+	}
+	m.lastEditKind = editNone
+	if hadSelection {
+		m.buf.SelectRange(m.buf.LineOffset(startLine), m.lineEndOffset(endLine))
+	}
+}
+
+// toggleBlockComment handles languages with no line-comment form: wraps
+// the active selection (or the whole current line, if none) in a single
+// block comment, or unwraps it if it's already wrapped.
+func (m *Model) toggleBlockComment(style paint.CommentStyle) {
+	if style.BlockStart == "" {
+		return
+	}
+	hadSelection := m.buf.HasSelection()
+	var start, end int
+	if hadSelection {
+		start, end, _ = m.buf.Selection()
+	} else {
+		lineStart, lineEnd := m.buf.CurrentLineRange()
+		content := strings.TrimSuffix(m.buf.TextRange(lineStart, lineEnd), "\n")
+		start, end = lineStart, lineStart+len([]rune(content))
+	}
+
+	text := m.buf.TextRange(start, end)
+	trimmed := strings.TrimSpace(text)
+
+	m.recordUndoBoundary(editInsert)
+	m.buf.DeleteRange(start, end)
+	var replacement string
+	if strings.HasPrefix(trimmed, style.BlockStart) && strings.HasSuffix(trimmed, style.BlockEnd) {
+		inner := strings.TrimPrefix(trimmed, style.BlockStart)
+		inner = strings.TrimSuffix(inner, style.BlockEnd)
+		replacement = strings.TrimSpace(inner)
+	} else {
+		replacement = style.BlockStart + " " + text + " " + style.BlockEnd
+	}
+	m.buf.MoveCursorTo(start)
+	m.buf.InsertString(replacement)
+
+	m.lastEditKind = editNone
+	if hadSelection {
+		m.buf.SelectRange(start, start+len([]rune(replacement)))
+	}
 }
 
 func tabWidthOrDefault(w int) int {

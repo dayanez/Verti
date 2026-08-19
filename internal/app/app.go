@@ -35,6 +35,32 @@ const (
 	editDelete
 )
 
+// promptKind identifies which single-line prompt (if any) currently owns
+// keyboard input, overlaid on the status bar.
+type promptKind int
+
+const (
+	promptNone promptKind = iota
+	promptFind
+	promptGoto
+	promptConfirmDiscard
+	promptReplaceFind
+	promptReplaceWith
+	promptSaveAs
+)
+
+// promptLabels gives the status-bar prefix for prompts that show live
+// typed input. promptConfirmDiscard is deliberately absent: its full
+// message (already phrased as a question) is set directly on m.status
+// instead.
+var promptLabels = map[promptKind]string{
+	promptFind:        "Find: ",
+	promptGoto:        "Go to line: ",
+	promptReplaceFind: "Replace -- find: ",
+	promptReplaceWith: "Replace -- with: ",
+	promptSaveAs:      "Save as: ",
+}
+
 type snapshot struct {
 	text   string
 	cursor int
@@ -64,6 +90,13 @@ type Model struct {
 	termHeight  int
 
 	paintOverlay *paint.Overlay
+
+	clipboard string
+
+	prompt          promptKind
+	promptText      string
+	pendingOpenPath string
+	replaceFindTerm string
 
 	focus  Focus
 	width  int
@@ -270,7 +303,20 @@ func (m *Model) redo() {
 	m.lastEditKind = editNone
 }
 
+// openFile opens path, but first asks for confirmation (via promptConfirmDiscard)
+// if the current buffer has unsaved changes that would otherwise be silently
+// discarded.
 func (m *Model) openFile(path string) {
+	if m.buf.Dirty() {
+		m.prompt = promptConfirmDiscard
+		m.pendingOpenPath = path
+		m.status = "unsaved changes in " + m.displayFilename() + " -- discard and open? (y/n)"
+		return
+	}
+	m.reallyOpenFile(path)
+}
+
+func (m *Model) reallyOpenFile(path string) {
 	buf, err := buffer.LoadFile(path)
 	if err != nil {
 		m.status = "open failed: " + err.Error()

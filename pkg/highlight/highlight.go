@@ -51,9 +51,11 @@ type Registry struct {
 
 // NewRegistry returns a Registry pre-populated with the editor's default
 // language support: real tree-sitter AST highlighting for Go, Python,
-// JavaScript/JSX, TypeScript/TSX, Rust, C/C++, Lua and Markdown, plus a
-// small hand-written tokenizer for JSON (tree-sitter-json has no bundled
-// Go grammar package, so it isn't part of the cgo path).
+// JavaScript/JSX, TypeScript/TSX, Rust, C/C++, Lua, Markdown, Bash, CSS,
+// HTML, YAML, TOML, Ruby, Java, PHP, SQL, C#, Kotlin, Swift and Dockerfile
+// (all bundled by the already-vendored smacker/go-tree-sitter dependency),
+// plus a small hand-written tokenizer for JSON (tree-sitter-json has no
+// bundled Go grammar package, so it isn't part of the cgo path).
 func NewRegistry() *Registry {
 	r := &Registry{
 		factories: make(map[string]func() Highlighter),
@@ -71,19 +73,27 @@ func (r *Registry) Register(ext string, factory func() Highlighter) {
 	delete(r.instances, strings.ToLower(ext))
 }
 
-// For returns the Highlighter registered for a filename's extension, and
-// whether one was found.
+// For returns the Highlighter registered for filename, and whether one was
+// found. filename is matched two ways: first as a whole lowercase name
+// (so extension-less conventions like "Dockerfile" can be registered via
+// Register("dockerfile", ...)), then by extension.
 func (r *Registry) For(filename string) (Highlighter, bool) {
-	ext := extOf(filename)
-	if h, ok := r.instances[ext]; ok {
+	if h, ok := r.lookup(strings.ToLower(filename)); ok {
 		return h, true
 	}
-	factory, ok := r.factories[ext]
+	return r.lookup(extOf(filename))
+}
+
+func (r *Registry) lookup(key string) (Highlighter, bool) {
+	if h, ok := r.instances[key]; ok {
+		return h, true
+	}
+	factory, ok := r.factories[key]
 	if !ok {
 		return nil, false
 	}
 	h := factory()
-	r.instances[ext] = h
+	r.instances[key] = h
 	return h, true
 }
 
