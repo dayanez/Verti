@@ -87,3 +87,26 @@ func TestUnmatchedCloserStillInsertsNormally(t *testing.T) {
 		t.Fatalf("buffer = %q, want %q (nothing to type through)", got, ")")
 	}
 }
+
+// TestEnterWithSelectionEndingBeforeCloserStillSplitsIt covers the case
+// where blockIndentContext must look at the buffer state *after* the
+// selection is deleted, not before: with "oldarg" selected inside
+// "foo(oldarg)", the selection's own end sits right before the ')', but
+// once it's deleted the cursor is directly between '(' and ')', which is
+// exactly the case Enter should split onto three lines.
+func TestEnterWithSelectionEndingBeforeCloserStillSplitsIt(t *testing.T) {
+	m := newTestModel(t, "foo(oldarg)")
+	sendKeys(m, key(tea.KeyHome))
+	for i := 0; i < 4; i++ {
+		sendKeys(m, key(tea.KeyRight)) // cursor now right after '('
+	}
+	for i := 0; i < 6; i++ {
+		sendKeys(m, key(tea.KeyShiftRight)) // select "oldarg", ending right before ')'
+	}
+	sendKeys(m, key(tea.KeyEnter))
+
+	want := "foo(\n    \n)"
+	if got := m.buf.String(); got != want {
+		t.Fatalf("buffer = %q, want %q (opener and closer split onto their own lines)", got, want)
+	}
+}

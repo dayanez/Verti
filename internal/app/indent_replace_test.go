@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,6 +81,9 @@ func TestReplaceAllReplacesEveryOccurrenceAsOneUndoStep(t *testing.T) {
 	if got := m.buf.String(); got != want {
 		t.Fatalf("buffer = %q, want %q", got, want)
 	}
+	if !m.buf.Dirty() {
+		t.Fatal("buffer should be dirty after Replace-All, so closing the tab prompts to save instead of silently discarding it")
+	}
 
 	m.undo()
 	if got := m.buf.String(); got != "cat dog cat bird cat" {
@@ -95,6 +99,21 @@ func TestReplaceAllReportsNotFound(t *testing.T) {
 
 	if got := m.buf.String(); got != "no match here" {
 		t.Fatalf("buffer changed despite no match: %q", got)
+	}
+}
+
+func TestSaveAsWithinWorkspaceRefreshesExplorerTree(t *testing.T) {
+	m := newTestModel(t, "content to save")
+	newPath := filepath.Join(m.exp.Root.Path, "brandnew.txt")
+
+	sendKeys(m, key(tea.KeyCtrlO))
+	for range m.promptText {
+		sendKeys(m, key(tea.KeyBackspace))
+	}
+	sendKeys(m, runes(newPath), key(tea.KeyEnter))
+
+	if !strings.Contains(m.exp.Render(false), "brandnew.txt") {
+		t.Fatal("explorer tree does not show brandnew.txt after Save As; the sidebar should refresh to reflect the newly created file")
 	}
 }
 

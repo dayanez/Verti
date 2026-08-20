@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,37 @@ import (
 // actually moves focus there).
 func focusExplorer(m *Model) {
 	sendKeys(m, key(tea.KeyCtrlB), key(tea.KeyCtrlB))
+}
+
+// TestSaveDispatchesGitStatusReloadAsynchronously guards against
+// regressing back to a synchronous `git status` call in the save
+// keybinding: that shells out to git and blocks, which on a large or
+// busy repo would stall Update -- and therefore every keystroke and
+// redraw -- until the subprocess returns. Save should instead return a
+// command bubbletea runs on its own goroutine.
+func TestSaveDispatchesGitStatusReloadAsynchronously(t *testing.T) {
+	m := newTestModel(t, "hello")
+	root := m.exp.Root.Path
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git unavailable in this environment: %v: %s", err, out)
+	}
+
+	_, cmd := m.Update(key(tea.KeyCtrlS))
+	if cmd == nil {
+		t.Fatal("save returned a nil command; want one that reloads git status in the background")
+	}
+	msg, ok := cmd().(gitStatusMsg)
+	if !ok {
+		t.Fatalf("cmd() produced %T, want gitStatusMsg", msg)
+	}
+	if msg.status == nil {
+		t.Fatal("gitStatusMsg.status is nil")
+	}
+
+	m.Update(msg)
+	if got := m.exp.Branch(); got == "" {
+		t.Fatal("exp.Branch() is empty after applying the async git status reload, want the repo's branch name")
+	}
 }
 
 func TestExplorerKeyANewFilePromptsAndCreates(t *testing.T) {
@@ -94,6 +126,42 @@ func TestExplorerKeyDDeletesOnConfirm(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "scratch.txt")); !os.IsNotExist(err) {
 		t.Fatal("scratch.txt should no longer exist after confirming delete")
+	}
+}
+
+func TestExplorerKeyRRenamesSelectedEntryRetargetsOpenTab(t *testing.T) {
+	m := newTestModel(t, "hello") // opens scratch.txt as the active tab
+	root := m.exp.Root.Path
+	sendKeys(m, key(tea.KeyEnd), runes(" world")) // dirty the buffer so a later Ctrl+S would write it back out
+	focusExplorer(m)
+
+	sendKeys(m, runes("r"))
+	for range m.promptText {
+		sendKeys(m, key(tea.KeyBackspace))
+	}
+	sendKeys(m, runes("renamed.txt"), key(tea.KeyEnter))
+
+	want := filepath.Join(root, "renamed.txt")
+	if m.filename != want {
+		t.Fatalf("active tab's filename = %q after rename, want %q: Ctrl+S must write to the new path, not recreate the old file", m.filename, want)
+	}
+	if len(m.tabs) != 1 || m.tabs[0].filename != want {
+		t.Fatalf("tab filename = %q, want %q", m.tabs[0].filename, want)
+	}
+}
+
+func TestExplorerKeyDDeletesOnConfirmUntitlesOpenTab(t *testing.T) {
+	m := newTestModel(t, "hello") // opens scratch.txt as the active tab
+	sendKeys(m, key(tea.KeyEnd), runes(" world")) // dirty the buffer, so its unsaved content matters
+	focusExplorer(m)
+
+	sendKeys(m, runes("d"), runes("y"))
+
+	if m.filename != "" {
+		t.Fatalf("active tab's filename = %q after deleting the file, want \"\": Ctrl+S must not silently recreate the deleted file", m.filename)
+	}
+	if got := m.buf.String(); got != "hello world" {
+		t.Fatalf("buffer content = %q, want the unsaved edit preserved: %q", got, "hello world")
 	}
 }
 

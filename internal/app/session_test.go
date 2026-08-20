@@ -128,6 +128,41 @@ func TestRestoreSessionSkipsFilesThatNoLongerExist(t *testing.T) {
 	}
 }
 
+func TestSaveSessionWithUntitledActiveTabKeepsCorrectActiveTabOnRestore(t *testing.T) {
+	withSessionConfigDir(t)
+	root := t.TempDir()
+	fileA := filepath.Join(root, "a.txt")
+	fileB := filepath.Join(root, "b.txt")
+	if err := os.WriteFile(fileA, []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileB, []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := New(root, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.Update(windowSizeMsg())
+	m.openFile(fileA)
+	m.openFile(fileB)
+	m.newTab() // an untitled scratch tab, now the focused one, with nothing to persist
+
+	m.saveSession()
+
+	reopened, err := New(root, "")
+	if err != nil {
+		t.Fatalf("New (reopen): %v", err)
+	}
+	if len(reopened.tabs) != 2 {
+		t.Fatalf("len(tabs) = %d, want 2 (the untitled tab isn't persisted)", len(reopened.tabs))
+	}
+	if reopened.filename != fileA {
+		t.Fatalf("active tab filename = %q, want %q (the first persisted tab, since the actually-focused tab was untitled)", reopened.filename, fileA)
+	}
+}
+
 func TestNewWithNoSavedSessionStartsBlank(t *testing.T) {
 	withSessionConfigDir(t)
 	root := t.TempDir()

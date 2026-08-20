@@ -56,10 +56,10 @@ func (m *Model) restoreSession(rootDir string) {
 // directory just means nothing gets remembered, not a failure to quit.
 func (m *Model) saveSession() {
 	m.snapshotActiveTab()
-	activeFilename := m.tabs[m.activeTab].filename
 
 	var sess session.Session
-	for _, t := range m.tabs {
+	sess.ActiveTab = -1 // stays -1 if the active tab is untitled and has nothing to restore
+	for i, t := range m.tabs {
 		if t.filename == "" {
 			continue
 		}
@@ -69,7 +69,7 @@ func (m *Model) saveSession() {
 			ScrollLine:   t.scrollLine,
 			ScrollCol:    t.scrollCol,
 		})
-		if t.filename == activeFilename {
+		if i == m.activeTab {
 			sess.ActiveTab = len(sess.Tabs) - 1
 		}
 	}

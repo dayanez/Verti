@@ -112,6 +112,9 @@ func TestRestore(t *testing.T) {
 	if got := gb.CursorOffset(); got != 4 {
 		t.Fatalf("CursorOffset() = %d, want 4", got)
 	}
+	if !gb.Dirty() {
+		t.Error("Dirty() = false after Restore, want true: Restore is a mutator (used by undo/redo and Replace-All), so it must mark the buffer dirty like every other mutator")
+	}
 }
 
 func TestSelectionRangeAndText(t *testing.T) {
@@ -444,6 +447,55 @@ func TestNavigationNearEndOfLargeFileStaysFast(t *testing.T) {
 	// finish in well under one.
 	if elapsed > time.Second {
 		t.Fatalf("10,000 navigation ops near EOF of a large file took %v, want well under 1s (possible O(file size) regression in line/column lookups)", elapsed)
+	}
+}
+
+// TestRepeatedStringCallsOnLargeUnchangedBufferStayFast guards the cache
+// in stringLocked: display.Editor.Render calls buf.String() once per
+// frame to hand the syntax highlighter contiguous source text, but most
+// frames (cursor movement, scrolling, an unrelated mouse event) don't
+// touch the buffer's content at all. Without the cache, every one of
+// those frames pays a full O(file size) rebuild-and-reencode for a
+// String() call whose answer hadn't changed since the last frame.
+func TestRepeatedStringCallsOnLargeUnchangedBufferStayFast(t *testing.T) {
+	var sb strings.Builder
+	const totalLines = 200_000
+	for i := 0; i < totalLines; i++ {
+		sb.WriteString("line of sample text here\n")
+	}
+	gb := NewFromString(sb.String())
+	gb.MoveCursorTo(gb.Len() / 2) // one real rebuild, priming the cache
+
+	start := time.Now()
+	for i := 0; i < 2000; i++ {
+		_ = gb.String()
+	}
+	elapsed := time.Since(start)
+
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("2000 String() calls on an unchanged ~5MB buffer took %v, want well under 200ms (possible cache regression: every call is redoing the full rebuild)", elapsed)
+	}
+}
+
+func TestStringCacheInvalidatesOnEditAndSurvivesMultipleReads(t *testing.T) {
+	gb := NewFromString("hello")
+
+	if got := gb.String(); got != "hello" {
+		t.Fatalf("String() = %q, want %q", got, "hello")
+	}
+	if got := gb.String(); got != "hello" {
+		t.Fatalf("second String() (cache hit) = %q, want %q", got, "hello")
+	}
+
+	gb.MoveCursorTo(5)
+	gb.InsertString(" world")
+	if got := gb.String(); got != "hello world" {
+		t.Fatalf("String() after an edit = %q, want %q: a cached copy from before the edit leaked through", got, "hello world")
+	}
+
+	gb.DeleteBackward()
+	if got := gb.String(); got != "hello worl" {
+		t.Fatalf("String() after DeleteBackward = %q, want %q", got, "hello worl")
 	}
 }
 

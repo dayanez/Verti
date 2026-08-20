@@ -171,3 +171,33 @@ func TestReadWriteBeforeStartReturnsErrNotRunning(t *testing.T) {
 		t.Fatalf("Read() before Start error = %v, want ErrNotRunning", err)
 	}
 }
+
+// TestCloseWhileReadBlockedDoesNotRace exercises the case a background
+// read goroutine (like readTermCmd in internal/app) is blocked in Read
+// when Close runs concurrently: Close must wait for the in-flight Read to
+// return before it closes the underlying pty handle, rather than closing
+// out from under it. Run with -race to catch a regression.
+func TestCloseWhileReadBlockedDoesNotRace(t *testing.T) {
+	m := New()
+	if err := m.Start(80, 24); err != nil {
+		t.Skipf("PTY unavailable in this environment: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		_, _ = m.Read(buf) // expected to unblock (with an error) once Close kills the shell
+	}()
+
+	time.Sleep(50 * time.Millisecond) // give the goroutine a chance to enter Read first
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read() did not unblock after Close()")
+	}
+}

@@ -28,6 +28,7 @@ type Manager struct {
 	pty pty.Pty
 	cmd *pty.Cmd
 	vt  vt10x.Terminal
+	wg  sync.WaitGroup // outstanding Read/Write/Resize calls against pty; Close waits on this before closing the handle out from under them
 }
 
 // New returns a Manager with no subshell started yet.
@@ -82,34 +83,51 @@ func defaultShell() string {
 // Read reads subshell output. It blocks like a normal PTY read; callers
 // driving a UI loop should run it in its own goroutine.
 func (m *Manager) Read(p []byte) (int, error) {
-	pt := m.activePty()
-	if pt == nil {
+	pt, ok := m.acquire()
+	if !ok {
 		return 0, ErrNotRunning
 	}
+	defer m.wg.Done()
 	return pt.Read(p)
 }
 
 // Write sends input to the subshell (keystrokes typed into the pane).
 func (m *Manager) Write(p []byte) (int, error) {
-	pt := m.activePty()
-	if pt == nil {
+	pt, ok := m.acquire()
+	if !ok {
 		return 0, ErrNotRunning
 	}
+	defer m.wg.Done()
 	return pt.Write(p)
 }
 
 // Resize notifies the subshell that the pane's dimensions changed.
 func (m *Manager) Resize(cols, rows int) error {
-	pt := m.activePty()
-	if pt == nil {
+	pt, ok := m.acquire()
+	if !ok {
 		return nil
 	}
+	defer m.wg.Done()
 	if cols > 0 && rows > 0 {
 		if vt := m.Screen(); vt != nil {
 			vt.Resize(cols, rows)
 		}
 	}
 	return pt.Resize(cols, rows)
+}
+
+// acquire returns the active pty and registers the call as in-flight
+// against it, so Close can wait for outstanding Read/Write/Resize calls to
+// return before it closes the underlying handle out from under them. The
+// caller must call m.wg.Done() exactly once after it's done with pt.
+func (m *Manager) acquire() (pty.Pty, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pty == nil {
+		return nil, false
+	}
+	m.wg.Add(1)
+	return m.pty, true
 }
 
 // Feed writes PTY output bytes into the virtual terminal, updating its
@@ -137,26 +155,31 @@ func (m *Manager) Running() bool {
 	return m.pty != nil
 }
 
-func (m *Manager) activePty() pty.Pty {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.pty
-}
-
 // Close terminates the subshell and releases the PTY. It is safe to call
 // even if no subshell is running.
+//
+// It clears m.pty first so any new Read/Write/Resize call fails fast with
+// ErrNotRunning, then kills the subshell process (which unblocks a Read
+// already in flight, since the pty's other end going away delivers it
+// EOF), then waits for that call to actually return before closing the
+// pty handle itself -- otherwise a Read blocked in a syscall on the
+// handle at the moment it's closed would be a use-after-close race.
 func (m *Manager) Close() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.pty == nil {
+	p := m.pty
+	cmd := m.cmd
+	if p == nil {
+		m.mu.Unlock()
 		return nil
 	}
-	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
-	}
-	err := m.pty.Close()
 	m.pty = nil
 	m.cmd = nil
 	m.vt = nil
-	return err
+	m.mu.Unlock()
+
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	m.wg.Wait()
+	return p.Close()
 }

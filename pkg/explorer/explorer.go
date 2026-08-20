@@ -136,11 +136,17 @@ func (e *Explorer) SetSize(w, h int) { e.Width, e.Height = w, h }
 func (e *Explorer) Branch() string { return e.git.Branch }
 
 // ReloadGitStatus re-reads the workspace's git status (branch, and which
-// files are dirty) without re-walking the directory tree. Cheap enough to
-// call after anything that might have changed it: a save, or focus
-// leaving the embedded shell (where the user may have just run `git
-// add`/`git commit`/`git checkout` by hand).
+// files are dirty) without re-walking the directory tree. It shells out to
+// git and blocks until that returns, so callers driving an interactive event
+// loop should prefer running gitstatus.Load themselves on a goroutine and
+// feeding the result to SetGitStatus instead of calling this directly.
 func (e *Explorer) ReloadGitStatus() { e.git = gitstatus.Load(e.Root.Path) }
+
+// SetGitStatus installs a git status computed elsewhere (typically on a
+// background goroutine, since gitstatus.Load shells out to git and can
+// take real time on a large or busy repo) without blocking to recompute
+// it here.
+func (e *Explorer) SetGitStatus(st *gitstatus.Status) { e.git = st }
 
 // MoveDown moves the selection one row down.
 func (e *Explorer) MoveDown() {

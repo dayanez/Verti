@@ -178,3 +178,90 @@ func TestRenderHasNoTrackGlyphWhenEverythingFits(t *testing.T) {
 		t.Fatalf("expected no track glyph when the thumb fills the whole height (everything fits), got %q", out)
 	}
 }
+
+func TestCellWidthTabAdvancesToNextStop(t *testing.T) {
+	tests := []struct{ atCol, tabWidth, want int }{
+		{0, 4, 4},
+		{1, 4, 3},
+		{3, 4, 1},
+		{4, 4, 4},
+		{0, 8, 8},
+	}
+	for _, tt := range tests {
+		if got := cellWidth('\t', tt.atCol, tt.tabWidth); got != tt.want {
+			t.Errorf("cellWidth('\\t', atCol=%d, tabWidth=%d) = %d, want %d", tt.atCol, tt.tabWidth, got, tt.want)
+		}
+	}
+}
+
+func TestVisualColOfExpandsTabsAndWideRunes(t *testing.T) {
+	runes := []rune("\tx中y") // tab, 'x', a double-width CJK rune, 'y'
+	const tabWidth = 4
+	cases := []struct {
+		idx  int
+		want int
+	}{
+		{0, 0},
+		{1, 4}, // tab expands to the next stop
+		{2, 5}, // one column for 'x'
+		{3, 7}, // the CJK rune takes two columns
+	}
+	for _, tt := range cases {
+		if got := visualColOf(runes, tt.idx, tabWidth); got != tt.want {
+			t.Errorf("visualColOf(idx=%d) = %d, want %d", tt.idx, got, tt.want)
+		}
+	}
+}
+
+func TestRuneIndexAtVisualColIsInverseOfVisualColOf(t *testing.T) {
+	runes := []rune("\tx中y")
+	const tabWidth = 4
+
+	for col := 0; col < 4; col++ {
+		if got := runeIndexAtVisualCol(runes, col, tabWidth); got != 0 {
+			t.Errorf("runeIndexAtVisualCol(col=%d) = %d, want 0 (still inside the tab)", col, got)
+		}
+	}
+	cases := []struct{ col, want int }{
+		{4, 1}, // 'x'
+		{5, 2}, // start of the CJK rune
+		{6, 2}, // still inside the CJK rune's second cell
+		{7, 3}, // 'y'
+	}
+	for _, tt := range cases {
+		if got := runeIndexAtVisualCol(runes, tt.col, tabWidth); got != tt.want {
+			t.Errorf("runeIndexAtVisualCol(col=%d) = %d, want %d", tt.col, got, tt.want)
+		}
+	}
+}
+
+func TestRenderDoesNotEmitLiteralTabs(t *testing.T) {
+	gb := buffer.NewFromString("\tindented")
+	e := New()
+	e.TabWidth = 4
+	e.SetSize(30, 5)
+	out := e.Render(gb, nil, true)
+	if strings.ContainsRune(out, '\t') {
+		t.Fatal("rendered output contains a literal tab character; Verti should expand tabs itself so the cursor and terminal agree on column widths")
+	}
+}
+
+func TestScreenToOffsetAccountsForTabExpansion(t *testing.T) {
+	gb := buffer.NewFromString("\tx")
+	e := New()
+	e.TabWidth = 4
+	e.SetSize(30, 5)
+	e.Render(gb, nil, true) // establishes scroll state
+
+	const gutterW = 3 // gutterWidth(1 line) = len("1")+2
+	for col := 0; col < 4; col++ {
+		off, ok := e.ScreenToOffset(gb, gutterW+col, 0)
+		if !ok || off != 0 {
+			t.Errorf("ScreenToOffset at tab-expansion column %d = (%d,%v), want (0,true)", col, off, ok)
+		}
+	}
+	off, ok := e.ScreenToOffset(gb, gutterW+4, 0)
+	if !ok || off != 1 {
+		t.Fatalf("ScreenToOffset at column 4 = (%d,%v), want (1,true): should land on 'x' past the expanded tab", off, ok)
+	}
+}

@@ -53,8 +53,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Leaving the shell is a natural moment to resync: this is
 			// where someone is most likely to have just run `git
 			// add`/`commit`/`checkout` by hand.
-			m.exp.ReloadGitStatus()
-			return m, nil
+			return m, reloadGitStatusCmd(m.exp.Root.Path)
 		}
 		if chord == globalToggleTerminalChord {
 			return m.dispatchGlobal("toggle_terminal")
@@ -96,7 +95,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		if !m.termVisible {
 			if m.focus == FocusTerminal {
 				m.focus = FocusEditor
-				m.exp.ReloadGitStatus()
+				return m, reloadGitStatusCmd(m.exp.Root.Path)
 			}
 			return m, nil
 		}
@@ -106,6 +105,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 			if err := m.term.Start(m.termWidth, m.termHeight); err != nil {
 				m.status = "terminal error: " + err.Error()
 				m.termVisible = false
+				m.layout()
 				return m, nil
 			}
 			cmd = readTermCmd(m.term)
@@ -126,11 +126,10 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		}
 		if err := m.buf.SaveFile(m.filename); err != nil {
 			m.status = "save failed: " + err.Error()
-		} else {
-			m.status = "saved " + m.filename
-			m.exp.ReloadGitStatus()
+			return m, nil
 		}
-		return m, nil
+		m.status = "saved " + m.filename
+		return m, reloadGitStatusCmd(m.exp.Root.Path)
 
 	case "undo":
 		m.undo()
@@ -231,7 +230,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 	case "quit":
 		m.saveSession()
 		m.quitting = true
-		_ = m.term.Close()
+		_ = m.Close()
 		return m, tea.Quit
 	}
 	return m, nil
@@ -506,7 +505,7 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 			m.replaceAll(m.replaceFindTerm, m.promptText)
 			m.closePrompt()
 		case promptSaveAs:
-			m.saveAs(m.promptText)
+			cmd = m.saveAs(m.promptText)
 			m.closePrompt()
 		case promptFindInFiles:
 			cmd = m.runFileSearch(m.promptText)
@@ -770,24 +769,30 @@ func (m *Model) replaceAll(find, replacement string) {
 
 // saveAs saves the buffer to path (resolved to an absolute path) and makes
 // it the buffer's filename, so a subsequent plain Ctrl+S writes there too.
-func (m *Model) saveAs(path string) {
+func (m *Model) saveAs(path string) tea.Cmd {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		m.status = "save canceled: no filename"
-		return
+		return nil
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		m.status = "save failed: " + err.Error()
-		return
+		return nil
 	}
 	if err := m.buf.SaveFile(abs); err != nil {
 		m.status = "save failed: " + err.Error()
-		return
+		return nil
 	}
 	m.filename = abs
 	m.status = "saved " + abs
-	m.exp.ReloadGitStatus()
+	if rel, err := filepath.Rel(m.exp.Root.Path, abs); err == nil && !strings.HasPrefix(rel, "..") {
+		// Refresh also reloads git status as part of the same walk, so
+		// there's no separate status reload needed on this path.
+		_ = m.exp.Refresh()
+		return nil
+	}
+	return reloadGitStatusCmd(m.exp.Root.Path)
 }
 
 // commentLineRange returns the (inclusive) line range Ctrl+/ should act
@@ -1044,6 +1049,9 @@ const mouseWheelLines = 3
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.paintOverlay.Active {
 		return m.handlePaintMouse(msg)
+	}
+	if m.helpVisible || m.prompt != promptNone {
+		return m, nil
 	}
 	if m.focus != FocusEditor {
 		return m, nil

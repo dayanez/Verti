@@ -209,11 +209,13 @@ func New(rootDir, filePath string) (*Model, error) {
 	}
 
 	registry := highlight.NewRegistry()
+	editorView := display.New()
+	editorView.TabWidth = tabWidthOrDefault(cfg.TabWidth)
 	m := &Model{
 		buf:            buf,
 		filename:       filename,
 		highlighter:    registry,
-		editorView:     display.New(),
+		editorView:     editorView,
 		exp:            exp,
 		sidebarVisible: true,
 		term:           terminal.New(),
@@ -238,6 +240,16 @@ func New(rootDir, filePath string) (*Model, error) {
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
+
+// Close releases resources New acquired that outlive a single Update call,
+// namely the embedded subshell's PTY. Callers should defer this right
+// after New succeeds, so the subshell is torn down on every exit path
+// (an error from tea.Program.Run, a caught signal, ...), not only the
+// explicit "quit" keybinding, which also calls this as part of its own
+// cleanup. Safe to call more than once or when no subshell was started.
+func (m *Model) Close() error {
+	return m.term.Close()
+}
 
 type termOutputMsg struct{ data []byte }
 type termClosedMsg struct{}
@@ -277,6 +289,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case fileSearchResultMsg:
 		m.applyFileSearchResult(msg)
+		return m, nil
+	case gitStatusMsg:
+		m.exp.SetGitStatus(msg.status)
 		return m, nil
 	case quickOpenFilesMsg:
 		m.applyQuickOpenFiles(msg)

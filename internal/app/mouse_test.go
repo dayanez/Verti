@@ -123,3 +123,19 @@ func TestClickOutsideEditorFocusIsIgnored(t *testing.T) {
 		t.Fatalf("cursor moved to %d from a click while the explorer had focus, want unchanged %d", got, before)
 	}
 }
+
+func TestClickAndWheelIgnoredWhileHelpOverlayVisible(t *testing.T) {
+	m := newTestModel(t, "hello\nworld")
+	sendKeys(m, key(tea.KeyF1)) // show the help overlay; focus stays FocusEditor underneath it
+	before := m.buf.CursorOffset()
+
+	m.Update(press(m, 2, 1))
+	if got := m.buf.CursorOffset(); got != before {
+		t.Fatalf("cursor moved to %d from a click while the help overlay was visible, want unchanged %d: clicks must not edit the hidden editor underneath", got, before)
+	}
+
+	m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	if got := m.buf.CursorOffset(); got != before {
+		t.Fatalf("cursor moved to %d from a wheel scroll while the help overlay was visible, want unchanged %d", got, before)
+	}
+}

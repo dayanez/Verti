@@ -58,6 +58,18 @@ type GapBuffer struct {
 	// instance, keeps its +x bit; a buffer with no backing file yet (New,
 	// NewFromString) defaults to a plain 0o644 for its eventual Save As.
 	perm os.FileMode
+
+	// version counts mutations, so stringLocked can cache its result and
+	// only redo the O(n) rebuild when the content has actually changed
+	// since the last call, instead of on every call -- String is on the
+	// hot path once per render frame (the syntax highlighter needs the
+	// full source text to parse accurately), so most calls happen between
+	// edits, driven by cursor movement, scrolling, or a mouse event that
+	// didn't touch the buffer at all.
+	version    uint64
+	strCache   string
+	strCacheV  uint64
+	strCacheOK bool
 }
 
 const defaultFilePerm = 0o644
@@ -141,19 +153,49 @@ func (gb *GapBuffer) logicalLenLocked() int {
 	return len(gb.data) - (gb.gapEnd - gb.gapStart)
 }
 
-// String returns the full text of the buffer.
+// String returns the full text of the buffer. On a cache hit (nothing
+// changed since the last call) this only takes a read lock; a miss
+// upgrades to a write lock to safely populate the cache, since a bare
+// RLock permits concurrent readers and must never see stringLocked mutate
+// shared state.
 func (gb *GapBuffer) String() string {
 	gb.mu.RLock()
-	defer gb.mu.RUnlock()
+	if gb.strCacheOK && gb.strCacheV == gb.version {
+		s := gb.strCache
+		gb.mu.RUnlock()
+		return s
+	}
+	gb.mu.RUnlock()
+
+	gb.mu.Lock()
+	defer gb.mu.Unlock()
 	return gb.stringLocked()
 }
 
+// stringLocked requires the caller to hold gb.mu for writing: a cache
+// miss populates gb.strCache, which a bare read lock isn't safe for.
 func (gb *GapBuffer) stringLocked() string {
+	if gb.strCacheOK && gb.strCacheV == gb.version {
+		return gb.strCache
+	}
 	var sb strings.Builder
 	sb.Grow(gb.logicalLenLocked())
 	sb.WriteString(string(gb.data[:gb.gapStart]))
 	sb.WriteString(string(gb.data[gb.gapEnd:]))
-	return sb.String()
+	s := sb.String()
+	gb.strCache = s
+	gb.strCacheV = gb.version
+	gb.strCacheOK = true
+	return s
+}
+
+// markDirtyLocked marks the buffer as having unsaved changes and bumps
+// its version, invalidating stringLocked's cache. Every mutator calls
+// this exactly once, instead of setting gb.dirty directly, so the two
+// always stay in sync.
+func (gb *GapBuffer) markDirtyLocked() {
+	gb.dirty = true
+	gb.version++
 }
 
 // runeAtLocked returns the rune at logical offset i (0 <= i < logical
@@ -267,7 +309,7 @@ func (gb *GapBuffer) InsertRune(r rune) {
 	defer gb.mu.Unlock()
 	pos := gb.gapStart
 	gb.insertRuneLocked(r)
-	gb.dirty = true
+	gb.markDirtyLocked()
 	if r == '\n' {
 		gb.insertIntoLineIndexLocked(pos, 1, []int{1})
 	} else {
@@ -290,7 +332,7 @@ func (gb *GapBuffer) InsertString(s string) {
 		}
 		n++
 	}
-	gb.dirty = true
+	gb.markDirtyLocked()
 	gb.insertIntoLineIndexLocked(pos, n, newlineOffsets)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 }
@@ -349,7 +391,7 @@ func (gb *GapBuffer) DeleteBackward() bool {
 	}
 	start := gb.gapStart - 1
 	gb.gapStart--
-	gb.dirty = true
+	gb.markDirtyLocked()
 	gb.deleteFromLineIndexLocked(start, start+1)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 	return true
@@ -364,7 +406,7 @@ func (gb *GapBuffer) DeleteForward() bool {
 		return false
 	}
 	gb.gapEnd++
-	gb.dirty = true
+	gb.markDirtyLocked()
 	gb.deleteFromLineIndexLocked(gb.gapStart, gb.gapStart+1)
 	return true
 }
@@ -498,6 +540,7 @@ func (gb *GapBuffer) Restore(text string, offset int) {
 	gb.moveGapTo(gb.clamp(offset))
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 	gb.hasSel = false
+	gb.markDirtyLocked()
 }
 
 func (gb *GapBuffer) rebuildLineIndexLocked(runes []rune) {
@@ -545,7 +588,7 @@ func (gb *GapBuffer) DeleteRange(start, end int) string {
 	deleted := gb.substringLocked(start, end)
 	gb.moveGapTo(end)
 	gb.gapStart = start
-	gb.dirty = true
+	gb.markDirtyLocked()
 	gb.hasSel = false
 	gb.deleteFromLineIndexLocked(start, end)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)

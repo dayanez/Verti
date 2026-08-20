@@ -112,12 +112,12 @@ func (m *Model) blockIndentContext() (opensBlock, closesBlock bool) {
 // empty open/close pair onto three lines with the cursor left indented
 // in the middle one.
 func (m *Model) insertNewlineWithIndent() {
+	m.recordUndoBoundary(editInsert)
+	m.buf.DeleteSelection()
+
 	indent := m.currentLineIndent()
 	extra := strings.Repeat(" ", tabWidthOrDefault(m.cfg.TabWidth))
 	opensBlock, closesBlock := m.blockIndentContext()
-
-	m.recordUndoBoundary(editInsert)
-	m.buf.DeleteSelection()
 
 	if !opensBlock {
 		m.buf.InsertString("\n" + indent)

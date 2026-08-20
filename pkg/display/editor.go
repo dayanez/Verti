@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/dommcpro/verti/pkg/buffer"
 	"github.com/dommcpro/verti/pkg/highlight"
@@ -91,16 +92,75 @@ func (t Theme) styleFor(kind highlight.Kind) lipgloss.Style {
 }
 
 // Editor renders a viewport onto a buffer.GapBuffer.
+//
+// ScrollCol is a screen column, not a rune index: a line's rune index and
+// its on-screen column diverge as soon as it contains a tab (which
+// expands to the next TabWidth stop, itself rendered as spaces rather
+// than a literal '\t' left for the terminal to expand unpredictably) or a
+// double-width rune such as CJK text or an emoji. renderLine,
+// EnsureCursorVisible, and ScreenToOffset all convert between the two via
+// visualColOf/runeIndexAtVisualCol so the cursor, selection, and mouse
+// clicks land on the same cell the terminal actually draws.
 type Editor struct {
 	Width, Height int
 	ScrollLine    int
 	ScrollCol     int
+	TabWidth      int
 	Theme         Theme
 }
 
 // New returns an Editor with the default theme.
 func New() *Editor {
 	return &Editor{Theme: DefaultTheme()}
+}
+
+// tabWidth is TabWidth with a sane fallback for a zero-value Editor.
+func (e *Editor) tabWidth() int {
+	if e.TabWidth < 1 {
+		return 4
+	}
+	return e.TabWidth
+}
+
+// cellWidth returns how many terminal columns rune r occupies when it
+// starts at screen column atCol: a tab's width depends on where it falls
+// relative to the next tab stop, and go-runewidth reports 2 for
+// double-width runes (CJK, emoji, ...) and 0 for zero-width ones (which
+// we still count as 1, since we always render something for it and a
+// true zero would stall the rune-to-column walk).
+func cellWidth(r rune, atCol, tabWidth int) int {
+	if r == '\t' {
+		return tabWidth - atCol%tabWidth
+	}
+	if w := runewidth.RuneWidth(r); w > 0 {
+		return w
+	}
+	return 1
+}
+
+// visualColOf returns the screen column at which rune index idx of runes
+// begins.
+func visualColOf(runes []rune, idx, tabWidth int) int {
+	col := 0
+	for i := 0; i < idx && i < len(runes); i++ {
+		col += cellWidth(runes[i], col, tabWidth)
+	}
+	return col
+}
+
+// runeIndexAtVisualCol is the inverse of visualColOf: the index of the
+// rune whose cell contains screen column target, or len(runes) if target
+// is at or past the end of the line.
+func runeIndexAtVisualCol(runes []rune, target, tabWidth int) int {
+	col := 0
+	for i, r := range runes {
+		w := cellWidth(r, col, tabWidth)
+		if target < col+w {
+			return i
+		}
+		col += w
+	}
+	return len(runes)
 }
 
 // SetSize sets the viewport dimensions (including the line-number gutter).
@@ -137,11 +197,15 @@ func (e *Editor) EnsureCursorVisible(buf *buffer.GapBuffer) {
 	if visibleWidth < 1 {
 		visibleWidth = 1
 	}
-	if col < e.ScrollCol {
-		e.ScrollCol = col
+	visCol := col
+	if lines := buf.LinesRange(line, line+1); len(lines) == 1 {
+		visCol = visualColOf([]rune(lines[0]), col, e.tabWidth())
 	}
-	if col >= e.ScrollCol+visibleWidth {
-		e.ScrollCol = col - visibleWidth + 1
+	if visCol < e.ScrollCol {
+		e.ScrollCol = visCol
+	}
+	if visCol >= e.ScrollCol+visibleWidth {
+		e.ScrollCol = visCol - visibleWidth + 1
 	}
 	if e.ScrollCol < 0 {
 		e.ScrollCol = 0
@@ -178,7 +242,12 @@ func (e *Editor) ScreenToOffset(buf *buffer.GapBuffer, x, y int) (offset int, ok
 	if line < 0 {
 		line = 0
 	}
-	return buf.OffsetForLineCol(line, e.ScrollCol+textX), true
+	target := e.ScrollCol + textX
+	col := target
+	if lines := buf.LinesRange(line, line+1); len(lines) == 1 {
+		col = runeIndexAtVisualCol([]rune(lines[0]), target, e.tabWidth())
+	}
+	return buf.OffsetForLineCol(line, col), true
 }
 
 // Render draws the buffer's currently-visible lines with syntax
@@ -351,8 +420,10 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 		run.Reset()
 	}
 
+	tabWidth := e.tabWidth()
 	byteOff := lineStart
-	rendered := 0
+	rendered := 0 // screen columns written so far, not runes: a tab or a double-width rune can advance this by more than one
+	visCol := 0
 	for j, r := range runes {
 		rl := utf8.RuneLen(r)
 		for *tIdx < len(tokens) && tokens[*tIdx].EndByte <= byteOff {
@@ -365,7 +436,9 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 		isCursor := isCursorLine && j == cursorCol
 		isSelected := selFrom >= 0 && j >= selFrom && j < selTo
 
-		if j < e.ScrollCol {
+		w := cellWidth(r, visCol, tabWidth)
+		if visCol+w <= e.ScrollCol {
+			visCol += w
 			byteOff += rl
 			continue
 		}
@@ -377,13 +450,23 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 			flush()
 		}
 		runKind, runIsCursor, runIsSelected = kind, isCursor, isSelected
-		run.WriteRune(r)
-		rendered++
+		if r == '\t' {
+			// Rendered as spaces, not a literal '\t': a raw tab left for the
+			// terminal to expand has no fixed width Verti can reason about,
+			// which is exactly what desynced the cursor/selection from the
+			// glyphs on any tab-indented file (gofmt output included).
+			run.WriteString(strings.Repeat(" ", w))
+		} else {
+			run.WriteRune(r)
+		}
+		rendered += w
+		visCol += w
 		byteOff += rl
 	}
 	flush()
 
-	if isCursorLine && cursorCol >= len(runes) && cursorCol >= e.ScrollCol && rendered < visibleWidth {
+	cursorVisCol := visualColOf(runes, cursorCol, tabWidth)
+	if isCursorLine && cursorCol >= len(runes) && cursorVisCol >= e.ScrollCol && rendered < visibleWidth {
 		out.WriteString(e.Theme.Cursor.Render(" "))
 		rendered++
 	}
