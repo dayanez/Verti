@@ -9,31 +9,52 @@ import (
 	"github.com/dommcpro/verti/pkg/search"
 )
 
-// runFileSearch searches every file under the workspace root for query
-// and shows the results in the sidebar area (replacing the file tree
-// until Esc or a new search), moving focus there so up/down/Enter browse
-// them immediately.
-func (m *Model) runFileSearch(query string) {
+// fileSearchResultMsg carries a background search's results back into
+// Update once search.Files finishes walking the workspace.
+type fileSearchResultMsg struct {
+	query   string
+	results []search.Match
+	err     error
+}
+
+// runFileSearch kicks off a background search across the workspace for
+// query and returns immediately. search.Files walks and reads every
+// matching file under the root, which on a large tree can take real time,
+// so it runs on its own goroutine via the returned tea.Cmd rather than
+// blocking Update (and therefore every keystroke and redraw) until it's
+// done.
+func (m *Model) runFileSearch(query string) tea.Cmd {
 	if query == "" {
-		return
+		return nil
 	}
-	results, err := search.Files(m.exp.Root.Path, query)
-	if err != nil {
-		m.status = "search failed: " + err.Error()
+	m.status = fmt.Sprintf("searching for %q...", query)
+	root := m.exp.Root.Path
+	return func() tea.Msg {
+		results, err := search.Files(root, query)
+		return fileSearchResultMsg{query: query, results: results, err: err}
+	}
+}
+
+// applyFileSearchResult shows a finished background search's results in
+// the sidebar area (replacing the file tree until Esc or a new search),
+// moving focus there so up/down/Enter browse them immediately.
+func (m *Model) applyFileSearchResult(msg fileSearchResultMsg) {
+	if msg.err != nil {
+		m.status = "search failed: " + msg.err.Error()
 		return
 	}
 
-	m.searchResults = results
+	m.searchResults = msg.results
 	m.searchSelected = 0
 	m.searchResultsActive = true
 	m.sidebarVisible = true
 	m.focus = FocusSearchResults
 	m.layout()
 
-	if len(results) == 0 {
-		m.status = fmt.Sprintf("no matches for %q", query)
+	if len(msg.results) == 0 {
+		m.status = fmt.Sprintf("no matches for %q", msg.query)
 	} else {
-		m.status = fmt.Sprintf("%d match(es) for %q", len(results), query)
+		m.status = fmt.Sprintf("%d match(es) for %q", len(msg.results), msg.query)
 	}
 }
 

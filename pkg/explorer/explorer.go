@@ -6,6 +6,7 @@
 package explorer
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +14,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/dommcpro/verti/pkg/gitstatus"
+	"github.com/dommcpro/verti/pkg/ignore"
 )
+
+// ErrNothingSelected is returned by Rename and Delete when the tree is
+// empty (nothing for them to act on).
+var ErrNothingSelected = errors.New("explorer: nothing selected")
 
 const doubleEnterWindow = 500 * time.Millisecond
 
@@ -46,17 +54,23 @@ type Explorer struct {
 
 	lastEnterIdx  int
 	lastEnterTime time.Time
+
+	ignore *ignore.Matcher
+	git    *gitstatus.Status
 }
 
 // New loads rootPath as the explorer's workspace root, with its immediate
-// children loaded and visible (but not expanded).
+// children loaded and visible (but not expanded). Entries matched by the
+// workspace root's .gitignore (node_modules, build output, ...) are left
+// out of the tree entirely, not just visually hidden, so they're never
+// read from disk in the first place.
 func New(rootPath string) (*Explorer, error) {
 	abs, err := filepath.Abs(rootPath)
 	if err != nil {
 		return nil, err
 	}
 	root := &node{Name: filepath.Base(abs), Path: abs, IsDir: true, Expanded: true}
-	e := &Explorer{Root: root, lastEnterIdx: -1}
+	e := &Explorer{Root: root, lastEnterIdx: -1, ignore: ignore.Load(abs), git: gitstatus.Load(abs)}
 	if err := e.loadChildren(root); err != nil {
 		return nil, err
 	}
@@ -80,8 +94,12 @@ func (e *Explorer) loadChildren(n *node) error {
 		if ent.Name() == ".git" {
 			continue
 		}
+		entPath := filepath.Join(n.Path, ent.Name())
+		if e.ignore.Match(ignore.RelSlash(e.Root.Path, entPath), ent.IsDir()) {
+			continue
+		}
 		n.Children = append(n.Children, &node{
-			Name: ent.Name(), Path: filepath.Join(n.Path, ent.Name()), IsDir: ent.IsDir(), parent: n,
+			Name: ent.Name(), Path: entPath, IsDir: ent.IsDir(), parent: n,
 		})
 	}
 	n.loaded = true
@@ -112,6 +130,17 @@ func (e *Explorer) rebuildFlat() {
 
 // SetSize sets the sidebar's rendered dimensions.
 func (e *Explorer) SetSize(w, h int) { e.Width, e.Height = w, h }
+
+// Branch returns the workspace's current git branch, or "" if it isn't a
+// git repository (or git isn't installed).
+func (e *Explorer) Branch() string { return e.git.Branch }
+
+// ReloadGitStatus re-reads the workspace's git status (branch, and which
+// files are dirty) without re-walking the directory tree. Cheap enough to
+// call after anything that might have changed it: a save, or focus
+// leaving the embedded shell (where the user may have just run `git
+// add`/`git commit`/`git checkout` by hand).
+func (e *Explorer) ReloadGitStatus() { e.git = gitstatus.Load(e.Root.Path) }
 
 // MoveDown moves the selection one row down.
 func (e *Explorer) MoveDown() {
@@ -240,12 +269,104 @@ func (e *Explorer) Refresh() error {
 	if p, _, ok := e.Selected(); ok {
 		selectedPath = p
 	}
+	e.ignore = ignore.Load(e.Root.Path)
+	e.git = gitstatus.Load(e.Root.Path)
 	if err := e.reloadRecursive(e.Root); err != nil {
 		return err
 	}
 	e.rebuildFlat()
 	for i, en := range e.flat {
 		if en.node.Path == selectedPath {
+			e.cursor = i
+			break
+		}
+	}
+	return nil
+}
+
+// TargetDir returns the directory a new file or folder should be created
+// in: the selected entry itself if it's a directory, its parent
+// otherwise, or the workspace root if nothing is selected.
+func (e *Explorer) TargetDir() string {
+	if len(e.flat) == 0 {
+		return e.Root.Path
+	}
+	n := e.flat[e.cursor].node
+	if n.IsDir {
+		return n.Path
+	}
+	if n.parent != nil {
+		return n.parent.Path
+	}
+	return e.Root.Path
+}
+
+// CreateFile creates an empty file named name inside TargetDir(), fails
+// if that path already exists (never silently truncates something the
+// user didn't ask to replace), refreshes the tree, and selects it.
+func (e *Explorer) CreateFile(name string) error {
+	path := filepath.Join(e.TargetDir(), name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	f.Close()
+	return e.refreshAndSelect(path)
+}
+
+// CreateDir creates a directory named name inside TargetDir(), refreshes
+// the tree, and selects it.
+func (e *Explorer) CreateDir(name string) error {
+	path := filepath.Join(e.TargetDir(), name)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		return err
+	}
+	return e.refreshAndSelect(path)
+}
+
+// Rename renames the selected entry to newName within its own parent
+// directory, refreshes the tree, and selects it under its new path.
+func (e *Explorer) Rename(newName string) error {
+	path, _, ok := e.Selected()
+	if !ok {
+		return ErrNothingSelected
+	}
+	newPath := filepath.Join(filepath.Dir(path), newName)
+	if err := os.Rename(path, newPath); err != nil {
+		return err
+	}
+	return e.refreshAndSelect(newPath)
+}
+
+// Delete removes the selected entry -- recursively, if it's a directory
+// -- and refreshes the tree. Callers are expected to confirm with the
+// user before calling this: it's not undoable the way an editor buffer's
+// changes are.
+func (e *Explorer) Delete() error {
+	path, isDir, ok := e.Selected()
+	if !ok {
+		return ErrNothingSelected
+	}
+	var err error
+	if isDir {
+		err = os.RemoveAll(path)
+	} else {
+		err = os.Remove(path)
+	}
+	if err != nil {
+		return err
+	}
+	return e.Refresh()
+}
+
+// refreshAndSelect reloads the tree from disk and, if path is now present
+// in it, moves the selection there.
+func (e *Explorer) refreshAndSelect(path string) error {
+	if err := e.Refresh(); err != nil {
+		return err
+	}
+	for i, en := range e.flat {
+		if en.node.Path == path {
 			e.cursor = i
 			break
 		}
@@ -321,6 +442,14 @@ func (e *Explorer) Render(focused bool) string {
 			}
 		}
 		label := strings.Repeat("  ", entry.depth) + indicator + " " + entry.node.Name
+		if code, ok := e.git.Dirty[ignore.RelSlash(e.Root.Path, entry.node.Path)]; ok {
+			// A plain trailing status letter (git's own porcelain code:
+			// M modified, A added, D deleted, ? untracked, ...) rather
+			// than a separately-colored glyph: ambient, not another
+			// thing to visually parse, and it needs no per-segment
+			// styling machinery on top of this row's single style.
+			label += " " + string(code)
+		}
 
 		style := lipgloss.NewStyle()
 		switch {

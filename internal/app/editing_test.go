@@ -10,12 +10,45 @@ import (
 )
 
 func TestEnterCarriesForwardCurrentLineIndent(t *testing.T) {
+	m := newTestModel(t, "    x = 1")
+	sendKeys(m, key(tea.KeyEnd), key(tea.KeyEnter), runes("y"))
+
+	want := "    x = 1\n    y"
+	if got := m.buf.String(); got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+}
+
+func TestEnterAddsExtraIndentAfterColon(t *testing.T) {
 	m := newTestModel(t, "    if true:")
 	sendKeys(m, key(tea.KeyEnd), key(tea.KeyEnter), runes("pass"))
 
-	want := "    if true:\n    pass"
+	want := "    if true:\n        pass" // 4 (carried) + 4 (extra level)
 	if got := m.buf.String(); got != want {
 		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+}
+
+func TestEnterAddsExtraIndentAfterOpenBrace(t *testing.T) {
+	m := newTestModel(t, "func f() {")
+	sendKeys(m, key(tea.KeyEnd), key(tea.KeyEnter), runes("x"))
+
+	want := "func f() {\n    x"
+	if got := m.buf.String(); got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+}
+
+func TestEnterSplitsFreshBracePairOntoThreeLines(t *testing.T) {
+	m := newTestModel(t, "func f() {}")
+	sendKeys(m, key(tea.KeyEnd), key(tea.KeyLeft), key(tea.KeyEnter))
+
+	want := "func f() {\n    \n}"
+	if got := m.buf.String(); got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+	if _, col := m.buf.CursorLineCol(); col != 4 {
+		t.Fatalf("cursor col after split = %d, want 4 (end of the indented middle line)", col)
 	}
 }
 
@@ -320,7 +353,8 @@ func TestFindInFilesShowsResultsAndJumpsToMatch(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	m.runFileSearch("needle")
+	sendKeys(m, key(tea.KeyCtrlT), runes("needle"))
+	sendKeyAndRunCmd(m, key(tea.KeyEnter))
 	if m.focus != FocusSearchResults {
 		t.Fatalf("focus = %v, want FocusSearchResults", m.focus)
 	}
@@ -354,7 +388,8 @@ func TestFindInFilesEscReturnsToExplorer(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	m.runFileSearch("needle")
+	sendKeys(m, key(tea.KeyCtrlT), runes("needle"))
+	sendKeyAndRunCmd(m, key(tea.KeyEnter))
 	sendKeys(m, key(tea.KeyEsc))
 	if m.focus != FocusExplorer {
 		t.Fatalf("focus = %v after Esc, want FocusExplorer", m.focus)
@@ -374,7 +409,8 @@ func TestFindInFilesUpDownMovesSelectionAndClamps(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	m.runFileSearch("needle")
+	sendKeys(m, key(tea.KeyCtrlT), runes("needle"))
+	sendKeyAndRunCmd(m, key(tea.KeyEnter))
 	if len(m.searchResults) != 2 {
 		t.Fatalf("len(searchResults) = %d, want 2", len(m.searchResults))
 	}

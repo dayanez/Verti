@@ -50,12 +50,17 @@ const (
 	promptReplaceWith
 	promptSaveAs
 	promptFindInFiles
+	promptQuickOpen
+	promptNewFile
+	promptNewFolder
+	promptRename
+	promptConfirmDeleteFile
 )
 
 // promptLabels gives the status-bar prefix for prompts that show live
-// typed input. promptConfirmDiscard is deliberately absent: its full
-// message (already phrased as a question, asking whether to close a
-// dirty tab without saving) is set directly on m.status instead.
+// typed input. promptConfirmDiscard and promptConfirmDeleteFile are
+// deliberately absent: their full message (already phrased as a
+// question) is set directly on m.status instead.
 var promptLabels = map[promptKind]string{
 	promptFind:        "Find: ",
 	promptGoto:        "Go to line: ",
@@ -63,6 +68,10 @@ var promptLabels = map[promptKind]string{
 	promptReplaceWith: "Replace -- with: ",
 	promptSaveAs:      "Save as: ",
 	promptFindInFiles: "Find in files: ",
+	promptQuickOpen:   "Go to file: ",
+	promptNewFile:     "New file: ",
+	promptNewFolder:   "New folder: ",
+	promptRename:      "Rename to: ",
 }
 
 type snapshot struct {
@@ -93,6 +102,25 @@ type Model struct {
 	searchSelected      int
 	searchResultsActive bool
 
+	// quickOpenFiles is the workspace's full file list, loaded once when
+	// the quick-open prompt opens; quickOpenResults is the fuzzy-filtered
+	// subset matching promptText, re-filtered on every keystroke while
+	// promptQuickOpen is active.
+	quickOpenFiles    []string
+	quickOpenResults  []string
+	quickOpenSelected int
+
+	// completionActive is true immediately after Tab inserted a
+	// buffer-word completion, so a second consecutive Tab (nothing else
+	// happening in between) cycles to the next candidate instead of
+	// starting over; completionPrefixStart/completionCandidates/
+	// completionIndex track the cycle in progress. Any other key ends it
+	// (see handleEditorKey).
+	completionActive      bool
+	completionPrefixStart int
+	completionCandidates  []string
+	completionIndex       int
+
 	term        *terminal.Manager
 	termVisible bool
 	termOutput  []byte
@@ -100,6 +128,20 @@ type Model struct {
 	termHeight  int
 
 	paintOverlay *paint.Overlay
+
+	// helpVisible shows the current keybinding overlay (F1 to toggle);
+	// helpScroll is how far into it the user has scrolled.
+	helpVisible bool
+	helpScroll  int
+	// helpLinesCache memoizes helpLines(): m.keymap never changes after
+	// startup, so it's built once and reused rather than rebuilt on
+	// every scroll keypress and render frame the overlay is open for.
+	helpLinesCache []string
+
+	// mouseSelecting is true between a left-button press in the editor
+	// and its release, so drag motion events extend a selection instead
+	// of being ignored or (worse) misread as a fresh click.
+	mouseSelecting bool
 
 	clipboard   string
 	osClipboard osClipboard
@@ -184,6 +226,14 @@ func New(rootDir, filePath string) (*Model, error) {
 		activeTab:      0,
 		osClipboard:    realOSClipboard{},
 	}
+	// Session restore only kicks in when no specific file was requested:
+	// `verti path/to/file.go` is a deliberate, focused request that
+	// shouldn't get buried under whatever tabs happened to be open last
+	// time, but plain `verti` (or `verti .`) is exactly "reopen this
+	// workspace," which is what session restore is for.
+	if filePath == "" {
+		m.restoreSession(rootDir)
+	}
 	return m, nil
 }
 
@@ -225,6 +275,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = FocusEditor
 		}
 		return m, nil
+	case fileSearchResultMsg:
+		m.applyFileSearchResult(msg)
+		return m, nil
+	case quickOpenFilesMsg:
+		m.applyQuickOpenFiles(msg)
+		return m, nil
 	}
 	return m, nil
 }
@@ -239,13 +295,22 @@ func (m *Model) appendTermOutput(data []byte) {
 // layout recomputes every pane's dimensions from the terminal window size,
 // matching VS Code's arrangement: the subshell pane spans the full width
 // at the bottom, with the sidebar and editor splitting the width above it.
+// tabBarHeight is 1 when the tab bar is showing (more than one tab open)
+// and 0 otherwise. layout() uses it to size the panes below the tab bar;
+// editorOrigin() (handlers.go) uses the same value to know where the
+// editor's content actually starts on screen, so mouse coordinates land
+// on the right row -- both need to agree on this, not each recompute it.
+func (m *Model) tabBarHeight() int {
+	if len(m.tabs) > 1 {
+		return 1
+	}
+	return 0
+}
+
 func (m *Model) layout() {
 	const statusH = 1
 
-	tabBarH := 0
-	if len(m.tabs) > 1 {
-		tabBarH = 1
-	}
+	tabBarH := m.tabBarHeight()
 
 	sidebarW := 0
 	if m.sidebarVisible {

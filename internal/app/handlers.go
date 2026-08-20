@@ -34,6 +34,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePaintKey(msg, chord)
 	}
 
+	if m.helpVisible {
+		return m.handleHelpKey(msg)
+	}
+
 	if m.prompt != promptNone {
 		return m.handlePromptKey(msg, chord)
 	}
@@ -46,6 +50,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.focus == FocusTerminal {
 		if chord == "esc" {
 			m.focus = FocusEditor
+			// Leaving the shell is a natural moment to resync: this is
+			// where someone is most likely to have just run `git
+			// add`/`commit`/`checkout` by hand.
+			m.exp.ReloadGitStatus()
 			return m, nil
 		}
 		if chord == globalToggleTerminalChord {
@@ -88,6 +96,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		if !m.termVisible {
 			if m.focus == FocusTerminal {
 				m.focus = FocusEditor
+				m.exp.ReloadGitStatus()
 			}
 			return m, nil
 		}
@@ -119,11 +128,16 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 			m.status = "save failed: " + err.Error()
 		} else {
 			m.status = "saved " + m.filename
+			m.exp.ReloadGitStatus()
 		}
 		return m, nil
 
 	case "undo":
 		m.undo()
+		return m, nil
+
+	case "select_all":
+		m.buf.SelectRange(0, m.buf.Len())
 		return m, nil
 
 	case "redo":
@@ -199,7 +213,23 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		m.promptText = ""
 		return m, nil
 
+	case "quick_open":
+		return m, m.openQuickOpen()
+
+	case "toggle_help":
+		m.helpVisible = !m.helpVisible
+		m.helpScroll = 0
+		return m, nil
+
+	case "jump_to_matching_bracket":
+		// Unguarded by focus, matching every other buffer-editing global
+		// command here (undo, copy, duplicate_line, ...): they all act on
+		// m.buf regardless of which pane currently has keyboard focus.
+		m.jumpToMatchingBracket()
+		return m, nil
+
 	case "quit":
+		m.saveSession()
 		m.quitting = true
 		_ = m.term.Close()
 		return m, tea.Quit
@@ -208,23 +238,35 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Captured before the reset below so the Tab case can tell "this Tab
+	// immediately follows a completion" (cycle to the next candidate)
+	// apart from "this Tab is a fresh press" (start a new completion, or
+	// just insert a tab). Every other key ends an in-progress cycle.
+	completionWasActive := m.completionActive
+	m.completionActive = false
+
 	switch msg.Type {
 	case tea.KeyRunes:
-		m.recordUndoBoundary(editInsert)
-		m.buf.DeleteSelection() // no-op if nothing selected; makes typing replace a selection
-		m.buf.InsertString(string(msg.Runes))
+		if len(msg.Runes) == 1 && m.handleAutoPairRune(msg.Runes[0]) {
+			// handled: wrapped a selection, typed through, or inserted a pair
+		} else {
+			m.recordUndoBoundary(editInsert)
+			m.buf.DeleteSelection() // no-op if nothing selected; makes typing replace a selection
+			m.buf.InsertString(string(msg.Runes))
+		}
 	case tea.KeySpace:
 		m.recordUndoBoundary(editInsert)
 		m.buf.DeleteSelection()
 		m.buf.InsertRune(' ')
 	case tea.KeyEnter:
-		m.recordUndoBoundary(editInsert)
-		m.buf.DeleteSelection()
-		m.buf.InsertString("\n" + m.currentLineIndent())
+		m.insertNewlineWithIndent()
 	case tea.KeyTab:
-		if m.selectionSpansMultipleLines() {
+		switch {
+		case m.selectionSpansMultipleLines():
 			m.indentSelection()
-		} else {
+		case m.tryWordCompletion(completionWasActive):
+			// handled: either started a completion or cycled to the next one
+		default:
 			m.recordUndoBoundary(editInsert)
 			m.buf.DeleteSelection()
 			m.buf.InsertString(strings.Repeat(" ", tabWidthOrDefault(m.cfg.TabWidth)))
@@ -237,10 +279,14 @@ func (m *Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyBackspace:
 		m.recordUndoBoundary(editDelete)
-		if !m.buf.HasSelection() {
-			m.buf.DeleteBackward()
-		} else {
+		switch {
+		case m.buf.HasSelection():
 			m.buf.DeleteSelection()
+		case m.cursorBetweenEmptyPair():
+			m.buf.DeleteBackward()
+			m.buf.DeleteForward()
+		default:
+			m.buf.DeleteBackward()
 		}
 	case tea.KeyDelete:
 		m.recordUndoBoundary(editDelete)
@@ -397,6 +443,16 @@ func (m *Model) setClipboard(text string) {
 	termenv.Copy(text)
 }
 
+// closePrompt returns to no prompt being active, clearing any text typed
+// into it and any in-progress replace-flow state (harmless to clear even
+// when a different prompt is closing: outside the replace flow it's
+// already empty).
+func (m *Model) closePrompt() {
+	m.prompt = promptNone
+	m.promptText = ""
+	m.replaceFindTerm = ""
+}
+
 // handlePromptKey handles input while a status-bar prompt (find, go-to-line,
 // or the unsaved-changes confirm) owns the keyboard, intercepted before any
 // other key routing.
@@ -413,19 +469,33 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 		return m, nil
 	}
 
+	if m.prompt == promptConfirmDeleteFile {
+		switch chord {
+		case "y", "Y":
+			m.deleteSelectedExplorerEntry()
+		case "n", "N", "esc":
+			m.status = "delete canceled"
+		}
+		m.prompt = promptNone
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	textChanged := false // set by the three text-editing cases below, so quick-open's filter is only ever recomputed when promptText actually changed
 	switch {
 	case chord == "esc":
-		m.prompt = promptNone
-		m.promptText = ""
-		m.replaceFindTerm = ""
+		m.closePrompt()
+	case m.prompt == promptQuickOpen && msg.Type == tea.KeyUp:
+		m.moveQuickOpenSelection(-1)
+	case m.prompt == promptQuickOpen && msg.Type == tea.KeyDown:
+		m.moveQuickOpenSelection(1)
 	case msg.Type == tea.KeyEnter:
 		switch m.prompt {
 		case promptFind:
 			m.findNext(m.promptText)
 		case promptGoto:
 			m.gotoLine(m.promptText)
-			m.prompt = promptNone
-			m.promptText = ""
+			m.closePrompt()
 		case promptReplaceFind:
 			if m.promptText != "" {
 				m.replaceFindTerm = m.promptText
@@ -434,28 +504,41 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 			}
 		case promptReplaceWith:
 			m.replaceAll(m.replaceFindTerm, m.promptText)
-			m.prompt = promptNone
-			m.promptText = ""
-			m.replaceFindTerm = ""
+			m.closePrompt()
 		case promptSaveAs:
 			m.saveAs(m.promptText)
-			m.prompt = promptNone
-			m.promptText = ""
+			m.closePrompt()
 		case promptFindInFiles:
-			m.runFileSearch(m.promptText)
-			m.prompt = promptNone
-			m.promptText = ""
+			cmd = m.runFileSearch(m.promptText)
+			m.closePrompt()
+		case promptQuickOpen:
+			m.openSelectedQuickOpenResult()
+		case promptNewFile:
+			m.createExplorerFile(m.promptText)
+			m.closePrompt()
+		case promptNewFolder:
+			m.createExplorerFolder(m.promptText)
+			m.closePrompt()
+		case promptRename:
+			m.renameExplorerEntry(m.promptText)
+			m.closePrompt()
 		}
 	case msg.Type == tea.KeyBackspace:
 		if r := []rune(m.promptText); len(r) > 0 {
 			m.promptText = string(r[:len(r)-1])
 		}
+		textChanged = true
 	case msg.Type == tea.KeySpace:
 		m.promptText += " "
+		textChanged = true
 	case msg.Type == tea.KeyRunes:
 		m.promptText += string(msg.Runes)
+		textChanged = true
 	}
-	return m, nil
+	if textChanged && m.prompt == promptQuickOpen {
+		m.refilterQuickOpen()
+	}
+	return m, cmd
 }
 
 // findNext selects the next occurrence of query after the cursor, wrapping
@@ -704,6 +787,7 @@ func (m *Model) saveAs(path string) {
 	}
 	m.filename = abs
 	m.status = "saved " + abs
+	m.exp.ReloadGitStatus()
 }
 
 // commentLineRange returns the (inclusive) line range Ctrl+/ should act
@@ -845,6 +929,25 @@ func (m *Model) handleExplorerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyEsc:
 		m.focus = FocusEditor
+	case tea.KeyRunes:
+		switch string(msg.Runes) {
+		case "a":
+			m.prompt = promptNewFile
+			m.promptText = ""
+		case "A":
+			m.prompt = promptNewFolder
+			m.promptText = ""
+		case "r":
+			if path, _, ok := m.exp.Selected(); ok {
+				m.prompt = promptRename
+				m.promptText = filepath.Base(path)
+			}
+		case "d":
+			if path, _, ok := m.exp.Selected(); ok {
+				m.prompt = promptConfirmDeleteFile
+				m.status = "delete " + filepath.Base(path) + "? (y/n)"
+			}
+		}
 	}
 	return m, nil
 }
@@ -911,12 +1014,13 @@ func (m *Model) handlePaintKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cmd
 
 // editorOrigin returns the screen column/row where the editor pane's
 // content begins, so absolute mouse coordinates can be translated into
-// paint-canvas-local coordinates.
+// editor- or paint-canvas-local coordinates.
 func (m *Model) editorOrigin() (x, y int) {
+	x, y = 0, m.tabBarHeight()
 	if m.sidebarVisible {
-		return m.exp.Width + 1, 0
+		x = m.exp.Width + 1
 	}
-	return 0, 0
+	return x, y
 }
 
 func clampInt(v, lo, hi int) int {
@@ -929,10 +1033,64 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
+// mouseWheelLines is how many lines one wheel tick moves the cursor (and,
+// via EnsureCursorVisible following it, the viewport). Wheel scroll
+// reuses plain cursor movement rather than a separate view-only scroll
+// state: the buffer has no notion of "viewport scrolled away from the
+// cursor," and adding one just for this would be exactly the kind of
+// extra state a minimal editor doesn't need for a wheel tick.
+const mouseWheelLines = 3
+
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if !m.paintOverlay.Active {
+	if m.paintOverlay.Active {
+		return m.handlePaintMouse(msg)
+	}
+	if m.focus != FocusEditor {
 		return m, nil
 	}
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		m.buf.ClearSelection()
+		for i := 0; i < mouseWheelLines; i++ {
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.buf.MoveUp()
+			} else {
+				m.buf.MoveDown()
+			}
+		}
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	ox, oy := m.editorOrigin()
+	x, y := msg.X-ox, msg.Y-oy
+
+	switch msg.Action {
+	case tea.MouseActionPress:
+		offset, ok := m.editorView.ScreenToOffset(m.buf, x, y)
+		if !ok {
+			return m, nil
+		}
+		m.buf.ClearSelection()
+		m.buf.MoveCursorTo(offset)
+		m.mouseSelecting = true
+	case tea.MouseActionMotion:
+		if !m.mouseSelecting {
+			return m, nil
+		}
+		offset, ok := m.editorView.ScreenToOffset(m.buf, x, y)
+		if !ok {
+			return m, nil
+		}
+		m.buf.StartSelection()
+		m.buf.MoveCursorTo(offset)
+	case tea.MouseActionRelease:
+		m.mouseSelecting = false
+	}
+	return m, nil
+}
+
+func (m *Model) handlePaintMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	ox, oy := m.editorOrigin()
 	x, y := msg.X-ox, msg.Y-oy
 	inBounds := x >= 0 && y >= 0 && x < m.editorView.Width && y < m.editorView.Height

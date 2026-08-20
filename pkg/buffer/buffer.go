@@ -7,6 +7,7 @@ package buffer
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -22,6 +23,17 @@ type GapBuffer struct {
 	gapStart int // logical cursor offset; data[gapStart:gapEnd] is unused
 	gapEnd   int
 	dirty    bool
+
+	// lineStarts[i] is the logical rune offset of line i's first rune;
+	// lineStarts[0] is always 0. It's maintained incrementally by every
+	// edit (see insertIntoLineIndexLocked / deleteFromLineIndexLocked)
+	// rather than recomputed from scratch, so that line/column lookups
+	// (CursorLineCol, OffsetLineCol, MoveUp/Down/Home/End, ...) are
+	// O(log n) or O(1) instead of re-scanning the whole buffer on every
+	// keystroke -- the latter is invisible on a small file and a real
+	// stutter on a large one, exactly the case a gap buffer exists to
+	// handle well.
+	lineStarts []int
 
 	// desiredCol remembers the column the cursor was last moved to
 	// horizontally, so that moving through short lines and back to a long
@@ -53,9 +65,10 @@ const defaultFilePerm = 0o644
 // New returns an empty buffer.
 func New() *GapBuffer {
 	return &GapBuffer{
-		data:   make([]rune, defaultGapSize),
-		gapEnd: defaultGapSize,
-		perm:   defaultFilePerm,
+		data:       make([]rune, defaultGapSize),
+		gapEnd:     defaultGapSize,
+		lineStarts: []int{0},
+		perm:       defaultFilePerm,
 	}
 }
 
@@ -121,6 +134,10 @@ func (gb *GapBuffer) Dirty() bool {
 func (gb *GapBuffer) Len() int {
 	gb.mu.RLock()
 	defer gb.mu.RUnlock()
+	return gb.logicalLenLocked()
+}
+
+func (gb *GapBuffer) logicalLenLocked() int {
 	return len(gb.data) - (gb.gapEnd - gb.gapStart)
 }
 
@@ -133,9 +150,35 @@ func (gb *GapBuffer) String() string {
 
 func (gb *GapBuffer) stringLocked() string {
 	var sb strings.Builder
-	sb.Grow(len(gb.data) - (gb.gapEnd - gb.gapStart))
+	sb.Grow(gb.logicalLenLocked())
 	sb.WriteString(string(gb.data[:gb.gapStart]))
 	sb.WriteString(string(gb.data[gb.gapEnd:]))
+	return sb.String()
+}
+
+// runeAtLocked returns the rune at logical offset i (0 <= i < logical
+// length), reading straight out of the underlying array around the gap
+// rather than materializing any part of the buffer as a string or slice.
+func (gb *GapBuffer) runeAtLocked(i int) rune {
+	if i < gb.gapStart {
+		return gb.data[i]
+	}
+	return gb.data[i+(gb.gapEnd-gb.gapStart)]
+}
+
+// substringLocked returns the text within the logical range [start, end)
+// by reading directly out of the underlying array, so a caller that only
+// needs a small slice of a huge buffer (a selection, a single line) never
+// pays to materialize the rest of it.
+func (gb *GapBuffer) substringLocked(start, end int) string {
+	if start >= end {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(end - start)
+	for i := start; i < end; i++ {
+		sb.WriteRune(gb.runeAtLocked(i))
+	}
 	return sb.String()
 }
 
@@ -145,9 +188,52 @@ func (gb *GapBuffer) Lines() []string {
 	return strings.Split(gb.String(), "\n")
 }
 
-// LineCount returns the number of lines in the buffer.
+// LineCount returns the number of lines in the buffer, O(1) via the
+// incrementally-maintained line index.
 func (gb *GapBuffer) LineCount() int {
-	return len(gb.Lines())
+	gb.mu.RLock()
+	defer gb.mu.RUnlock()
+	return len(gb.lineStarts)
+}
+
+// LinesRange returns the text of lines [startLine, endLine), clamped to
+// the buffer's actual range, without materializing any line outside it.
+// Used by the renderer so a viewport onto a huge file only ever pays for
+// the lines actually on screen.
+func (gb *GapBuffer) LinesRange(startLine, endLine int) []string {
+	gb.mu.RLock()
+	defer gb.mu.RUnlock()
+	if startLine < 0 {
+		startLine = 0
+	}
+	if endLine > len(gb.lineStarts) {
+		endLine = len(gb.lineStarts)
+	}
+	if startLine >= endLine {
+		return nil
+	}
+	out := make([]string, 0, endLine-startLine)
+	for line := startLine; line < endLine; line++ {
+		out = append(out, gb.substringLocked(gb.lineStarts[line], gb.lineEndLocked(line)))
+	}
+	return out
+}
+
+// lineEndLocked returns the offset just past the given line's content,
+// excluding its trailing newline (or the buffer's logical end, for the
+// last line).
+func (gb *GapBuffer) lineEndLocked(line int) int {
+	if line+1 < len(gb.lineStarts) {
+		return gb.lineStarts[line+1] - 1
+	}
+	return gb.logicalLenLocked()
+}
+
+// lineIndexForOffsetLocked returns the line containing the given logical
+// offset: the largest i such that lineStarts[i] <= offset.
+func (gb *GapBuffer) lineIndexForOffsetLocked(offset int) int {
+	i := sort.Search(len(gb.lineStarts), func(i int) bool { return gb.lineStarts[i] > offset })
+	return i - 1
 }
 
 // CursorOffset returns the current cursor position as a rune offset into
@@ -162,15 +248,7 @@ func (gb *GapBuffer) CursorOffset() int {
 func (gb *GapBuffer) CursorLineCol() (line, col int) {
 	gb.mu.RLock()
 	defer gb.mu.RUnlock()
-	for _, r := range gb.data[:gb.gapStart] {
-		if r == '\n' {
-			line++
-			col = 0
-		} else {
-			col++
-		}
-	}
-	return line, col
+	return gb.lineColLocked(gb.gapStart)
 }
 
 // MoveCursorTo relocates the gap so the cursor sits at the given logical
@@ -187,8 +265,14 @@ func (gb *GapBuffer) MoveCursorTo(offset int) {
 func (gb *GapBuffer) InsertRune(r rune) {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
+	pos := gb.gapStart
 	gb.insertRuneLocked(r)
 	gb.dirty = true
+	if r == '\n' {
+		gb.insertIntoLineIndexLocked(pos, 1, []int{1})
+	} else {
+		gb.insertIntoLineIndexLocked(pos, 1, nil)
+	}
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 }
 
@@ -196,10 +280,18 @@ func (gb *GapBuffer) InsertRune(r rune) {
 func (gb *GapBuffer) InsertString(s string) {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
+	pos := gb.gapStart
+	var newlineOffsets []int
+	n := 0
 	for _, r := range s {
 		gb.insertRuneLocked(r)
+		if r == '\n' {
+			newlineOffsets = append(newlineOffsets, n+1)
+		}
+		n++
 	}
 	gb.dirty = true
+	gb.insertIntoLineIndexLocked(pos, n, newlineOffsets)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 }
 
@@ -211,6 +303,42 @@ func (gb *GapBuffer) insertRuneLocked(r rune) {
 	gb.gapStart++
 }
 
+// insertIntoLineIndexLocked updates the line index after insertedLen runes
+// were inserted at pos, newlineOffsets holding the offsets (relative to
+// pos) of any newlines among them. Every line-start entry at or after pos
+// shifts right by insertedLen; any newlines inserted add new entries.
+func (gb *GapBuffer) insertIntoLineIndexLocked(pos, insertedLen int, newlineOffsets []int) {
+	li := gb.lineIndexForOffsetLocked(pos)
+	result := make([]int, 0, len(gb.lineStarts)+len(newlineOffsets))
+	result = append(result, gb.lineStarts[:li+1]...)
+	for _, rel := range newlineOffsets {
+		result = append(result, pos+rel)
+	}
+	for _, v := range gb.lineStarts[li+1:] {
+		result = append(result, v+insertedLen)
+	}
+	gb.lineStarts = result
+}
+
+// deleteFromLineIndexLocked updates the line index after the text in
+// [start, end) (removedLen runes) was deleted: any line-start entries that
+// fell inside the removed range are dropped, and every entry after it
+// shifts left by removedLen.
+func (gb *GapBuffer) deleteFromLineIndexLocked(start, end int) {
+	removedLen := end - start
+	li := gb.lineIndexForOffsetLocked(start)
+	hi := li + 1
+	for hi < len(gb.lineStarts) && gb.lineStarts[hi] <= end {
+		hi++
+	}
+	result := make([]int, 0, li+1+len(gb.lineStarts)-hi)
+	result = append(result, gb.lineStarts[:li+1]...)
+	for _, v := range gb.lineStarts[hi:] {
+		result = append(result, v-removedLen)
+	}
+	gb.lineStarts = result
+}
+
 // DeleteBackward removes the rune immediately before the cursor (Backspace
 // semantics). It reports whether a rune was removed.
 func (gb *GapBuffer) DeleteBackward() bool {
@@ -219,8 +347,10 @@ func (gb *GapBuffer) DeleteBackward() bool {
 	if gb.gapStart == 0 {
 		return false
 	}
+	start := gb.gapStart - 1
 	gb.gapStart--
 	gb.dirty = true
+	gb.deleteFromLineIndexLocked(start, start+1)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 	return true
 }
@@ -235,6 +365,7 @@ func (gb *GapBuffer) DeleteForward() bool {
 	}
 	gb.gapEnd++
 	gb.dirty = true
+	gb.deleteFromLineIndexLocked(gb.gapStart, gb.gapStart+1)
 	return true
 }
 
@@ -252,8 +383,7 @@ func (gb *GapBuffer) MoveLeft() {
 func (gb *GapBuffer) MoveRight() {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
-	logicalLen := len(gb.data) - (gb.gapEnd - gb.gapStart)
-	if gb.gapStart < logicalLen {
+	if gb.gapStart < gb.logicalLenLocked() {
 		gb.moveGapTo(gb.gapStart + 1)
 	}
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
@@ -277,8 +407,7 @@ func (gb *GapBuffer) MoveDown() {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
 	line, _ := gb.lineColLocked(gb.gapStart)
-	lines := strings.Split(gb.stringLocked(), "\n")
-	if line >= len(lines)-1 {
+	if line >= len(gb.lineStarts)-1 {
 		return
 	}
 	gb.moveGapTo(gb.offsetForLineColLocked(line+1, gb.desiredCol))
@@ -298,8 +427,7 @@ func (gb *GapBuffer) MoveEnd() {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
 	line, _ := gb.lineColLocked(gb.gapStart)
-	lines := strings.Split(gb.stringLocked(), "\n")
-	gb.moveGapTo(gb.offsetForLineColLocked(line, len([]rune(lines[line]))))
+	gb.moveGapTo(gb.offsetForLineColLocked(line, gb.lineEndLocked(line)-gb.lineStarts[line]))
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 }
 
@@ -309,13 +437,12 @@ func (gb *GapBuffer) MoveEnd() {
 func (gb *GapBuffer) MoveWordRight() {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
-	runes := []rune(gb.stringLocked())
+	n := gb.logicalLenLocked()
 	pos := gb.gapStart
-	n := len(runes)
-	for pos < n && !unicode.IsSpace(runes[pos]) {
+	for pos < n && !unicode.IsSpace(gb.runeAtLocked(pos)) {
 		pos++
 	}
-	for pos < n && unicode.IsSpace(runes[pos]) {
+	for pos < n && unicode.IsSpace(gb.runeAtLocked(pos)) {
 		pos++
 	}
 	gb.moveGapTo(pos)
@@ -328,12 +455,11 @@ func (gb *GapBuffer) MoveWordRight() {
 func (gb *GapBuffer) MoveWordLeft() {
 	gb.mu.Lock()
 	defer gb.mu.Unlock()
-	runes := []rune(gb.stringLocked())
 	pos := gb.gapStart
-	for pos > 0 && unicode.IsSpace(runes[pos-1]) {
+	for pos > 0 && unicode.IsSpace(gb.runeAtLocked(pos-1)) {
 		pos--
 	}
-	for pos > 0 && !unicode.IsSpace(runes[pos-1]) {
+	for pos > 0 && !unicode.IsSpace(gb.runeAtLocked(pos-1)) {
 		pos--
 	}
 	gb.moveGapTo(pos)
@@ -348,6 +474,16 @@ func (gb *GapBuffer) LineOffset(line int) int {
 	return gb.offsetForLineColLocked(line, 0)
 }
 
+// OffsetForLineCol converts a zero-based (line, col) pair to a logical
+// rune offset, clamping both the line and the column within it to the
+// buffer's actual bounds. Used by display.Editor.ScreenToOffset to turn
+// a mouse click's screen row/column into a buffer position.
+func (gb *GapBuffer) OffsetForLineCol(line, col int) int {
+	gb.mu.RLock()
+	defer gb.mu.RUnlock()
+	return gb.offsetForLineColLocked(line, col)
+}
+
 // Restore replaces the entire contents of the buffer with text and places
 // the cursor at offset. Used by undo/redo.
 func (gb *GapBuffer) Restore(text string, offset int) {
@@ -358,9 +494,20 @@ func (gb *GapBuffer) Restore(text string, offset int) {
 	copy(gb.data, runes)
 	gb.gapStart = len(runes)
 	gb.gapEnd = len(gb.data)
+	gb.rebuildLineIndexLocked(runes)
 	gb.moveGapTo(gb.clamp(offset))
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 	gb.hasSel = false
+}
+
+func (gb *GapBuffer) rebuildLineIndexLocked(runes []rune) {
+	starts := []int{0}
+	for i, r := range runes {
+		if r == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	gb.lineStarts = starts
 }
 
 // OffsetLineCol converts a logical rune offset (clamped to the buffer's
@@ -377,11 +524,7 @@ func (gb *GapBuffer) TextRange(start, end int) string {
 	gb.mu.RLock()
 	defer gb.mu.RUnlock()
 	start, end = gb.clamp(start), gb.clamp(end)
-	if start >= end {
-		return ""
-	}
-	runes := []rune(gb.stringLocked())
-	return string(runes[start:end])
+	return gb.substringLocked(start, end)
 }
 
 // DeleteRange removes the text within [start, end) (clamped to the
@@ -399,12 +542,12 @@ func (gb *GapBuffer) DeleteRange(start, end int) string {
 	if start >= end {
 		return ""
 	}
-	runes := []rune(gb.stringLocked())
-	deleted := string(runes[start:end])
+	deleted := gb.substringLocked(start, end)
 	gb.moveGapTo(end)
 	gb.gapStart = start
 	gb.dirty = true
 	gb.hasSel = false
+	gb.deleteFromLineIndexLocked(start, end)
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 	return deleted
 }
@@ -418,13 +561,11 @@ func (gb *GapBuffer) CurrentLineRange() (start, end int) {
 	gb.mu.RLock()
 	defer gb.mu.RUnlock()
 	line, _ := gb.lineColLocked(gb.gapStart)
-	lines := strings.Split(gb.stringLocked(), "\n")
-	for i := 0; i < line; i++ {
-		start += len([]rune(lines[i])) + 1
-	}
-	end = start + len([]rune(lines[line]))
-	if line < len(lines)-1 {
-		end++ // include the trailing newline
+	start = gb.lineStarts[line]
+	if line+1 < len(gb.lineStarts) {
+		end = gb.lineStarts[line+1]
+	} else {
+		end = gb.logicalLenLocked()
 	}
 	return start, end
 }
@@ -508,7 +649,7 @@ func (gb *GapBuffer) DeleteSelection() string {
 }
 
 func (gb *GapBuffer) clamp(offset int) int {
-	logicalLen := len(gb.data) - (gb.gapEnd - gb.gapStart)
+	logicalLen := gb.logicalLenLocked()
 	if offset < 0 {
 		return 0
 	}
@@ -518,62 +659,36 @@ func (gb *GapBuffer) clamp(offset int) int {
 	return offset
 }
 
-// lineColLocked computes (line, col) for a logical offset without needing
-// the gap moved there first; it counts newlines directly against the raw
-// buffer, treating indices within the gap as belonging to gapStart.
+// lineColLocked computes (line, col) for a logical offset in O(log n) via
+// a binary search over the maintained line-start index, rather than
+// re-scanning the buffer from the start counting newlines.
 func (gb *GapBuffer) lineColLocked(offset int) (line, col int) {
-	seen := 0
-	scan := func(r rune) bool {
-		if seen == offset {
-			return false
-		}
-		if r == '\n' {
-			line++
-			col = 0
-		} else {
-			col++
-		}
-		seen++
-		return true
-	}
-	for _, r := range gb.data[:gb.gapStart] {
-		if !scan(r) {
-			return
-		}
-	}
-	for _, r := range gb.data[gb.gapEnd:] {
-		if !scan(r) {
-			return
-		}
-	}
-	return
+	line = gb.lineIndexForOffsetLocked(offset)
+	col = offset - gb.lineStarts[line]
+	return line, col
 }
 
-// offsetForLineColLocked converts a (line, col) pair to a logical offset,
-// clamping col to the target line's length.
+// offsetForLineColLocked converts a (line, col) pair to a logical offset
+// in O(1) via the line-start index, clamping col to the target line's
+// length.
 func (gb *GapBuffer) offsetForLineColLocked(line, col int) int {
-	lines := strings.Split(gb.stringLocked(), "\n")
 	if line < 0 {
 		line = 0
 	}
-	if line >= len(lines) {
-		line = len(lines) - 1
+	if line >= len(gb.lineStarts) {
+		line = len(gb.lineStarts) - 1
 	}
-	target := []rune(lines[line])
-	if col > len(target) {
-		col = len(target)
+	lineStart := gb.lineStarts[line]
+	lineLen := gb.lineEndLocked(line) - lineStart
+	if col > lineLen {
+		col = lineLen
 	}
 	if col < 0 {
 		col = 0
 	}
-	offset := 0
-	for i := 0; i < line; i++ {
-		offset += len([]rune(lines[i])) + 1 // +1 for the newline
-	}
-	return offset + col
+	return lineStart + col
 }
 
-// growGap enlarges the gap so it can hold at least minExtra more runes.
 // growGap enlarges the gap so it can hold at least minExtra more runes.
 // Growth is geometric (at least doubling the buffer's total size), the
 // same amortized-O(1) trick append() uses. A fixed-size increment here

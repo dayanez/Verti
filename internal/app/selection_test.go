@@ -52,8 +52,38 @@ func sendKeys(m *Model, msgs ...tea.KeyMsg) {
 	}
 }
 
+// sendKeyAndRunCmd sends msg through Update and, if it returns a command
+// (background work like an async search), runs it synchronously and
+// feeds its resulting message back through Update too: the same two-step
+// dance the real bubbletea runtime performs for any command, just without
+// the goroutine.
+func sendKeyAndRunCmd(m *Model, msg tea.KeyMsg) {
+	_, cmd := m.Update(msg)
+	if cmd != nil {
+		m.Update(cmd())
+	}
+}
+
 func key(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
 func runes(s string) tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+func TestCtrlASelectsWholeBuffer(t *testing.T) {
+	m := newTestModel(t, "hello\nworld")
+	sendKeys(m, key(tea.KeyCtrlA))
+
+	if got := m.buf.SelectedText(); got != "hello\nworld" {
+		t.Fatalf("SelectedText() = %q, want the whole buffer", got)
+	}
+}
+
+func TestCtrlASelectAllThenTypeReplacesEverything(t *testing.T) {
+	m := newTestModel(t, "hello\nworld")
+	sendKeys(m, key(tea.KeyCtrlA), runes("X"))
+
+	if got := m.buf.String(); got != "X" {
+		t.Fatalf("buffer = %q, want %q", got, "X")
+	}
+}
 
 func TestShiftArrowsSelectText(t *testing.T) {
 	m := newTestModel(t, "hello world")

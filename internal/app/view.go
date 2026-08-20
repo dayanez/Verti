@@ -70,6 +70,9 @@ func (m *Model) currentHighlighter() highlight.Highlighter {
 }
 
 func (m *Model) renderTop() string {
+	if m.helpVisible {
+		return m.renderHelp()
+	}
 	var editorContent string
 	if m.paintOverlay.Active {
 		editorContent = m.renderPaintCanvas()
@@ -80,45 +83,98 @@ func (m *Model) renderTop() string {
 		return editorContent
 	}
 	var sidebarContent string
-	if m.searchResultsActive {
+	switch {
+	case m.prompt == promptQuickOpen:
+		sidebarContent = m.renderQuickOpenResults()
+	case m.searchResultsActive:
 		sidebarContent = m.renderSearchResults()
-	} else {
+	default:
 		sidebarContent = m.exp.Render(m.focus == FocusExplorer)
 	}
 	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Height(m.exp.Height).Render(strings.Repeat("│\n", m.exp.Height-1) + "│")
 	return lipgloss.JoinHorizontal(lipgloss.Top, sidebarContent, sep, editorContent)
 }
 
-// renderSearchResults draws the find-in-files results list in the sidebar
-// area, mirroring the file explorer's own layout (a title row, then one
-// row per result, the selected one reverse-styled), scrolled to keep the
-// selection visible.
-func (m *Model) renderSearchResults() string {
-	w, h := m.exp.Width, m.exp.Height
+// renderScrollableList draws a title row followed by one row per item (of
+// count total, each rendered by rowText), the selected one reverse-styled,
+// scrolled to keep it visible, and padded to fill h rows. Shared by
+// renderSearchResults and renderQuickOpenResults, which differ only in
+// what a "result" is and how one is described.
+func renderScrollableList(w, h int, title string, count, selected int, rowText func(i int) string) string {
 	if w <= 0 || h <= 0 {
 		return ""
 	}
 	rows := make([]string, 0, h)
-	title := padOrTruncate(fmt.Sprintf("%d result(s)", len(m.searchResults)), w)
-	rows = append(rows, lipgloss.NewStyle().Bold(true).Render(title))
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render(padOrTruncate(title, w)))
 
 	visibleRows := h - 1
 	scrollTop := 0
-	if m.searchSelected >= visibleRows {
-		scrollTop = m.searchSelected - visibleRows + 1
+	if selected >= visibleRows {
+		scrollTop = selected - visibleRows + 1
 	}
 	end := scrollTop + visibleRows
-	if end > len(m.searchResults) {
-		end = len(m.searchResults)
+	if end > count {
+		end = count
 	}
 	for i := scrollTop; i < end; i++ {
-		r := m.searchResults[i]
-		label := padOrTruncate(fmt.Sprintf("%s:%d: %s", r.Path, r.Line, r.Text), w)
-		if i == m.searchSelected {
+		label := padOrTruncate(rowText(i), w)
+		if i == selected {
 			rows = append(rows, lipgloss.NewStyle().Reverse(true).Render(label))
 		} else {
 			rows = append(rows, label)
 		}
+	}
+	for len(rows) < h {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderSearchResults draws the find-in-files results list in the sidebar
+// area, mirroring the file explorer's own layout.
+func (m *Model) renderSearchResults() string {
+	title := fmt.Sprintf("%d result(s)", len(m.searchResults))
+	return renderScrollableList(m.exp.Width, m.exp.Height, title, len(m.searchResults), m.searchSelected, func(i int) string {
+		r := m.searchResults[i]
+		return fmt.Sprintf("%s:%d: %s", r.Path, r.Line, r.Text)
+	})
+}
+
+// renderQuickOpenResults draws the quick-open fuzzy-filtered file list in
+// the sidebar area, the same layout renderSearchResults uses.
+func (m *Model) renderQuickOpenResults() string {
+	title := fmt.Sprintf("%d file(s)", len(m.quickOpenResults))
+	if m.quickOpenFiles == nil {
+		title = "loading..."
+	}
+	return renderScrollableList(m.exp.Width, m.exp.Height, title, len(m.quickOpenResults), m.quickOpenSelected, func(i int) string {
+		return m.quickOpenResults[i]
+	})
+}
+
+// renderHelp draws the keybinding overlay: helpLines' content, scrolled
+// by helpScroll, filling the same width x height the editor+sidebar
+// normally occupy.
+func (m *Model) renderHelp() string {
+	w, h := m.width, m.editorView.Height
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	lines := m.helpLines()
+	end := m.helpScroll + h
+	if end > len(lines) {
+		end = len(lines)
+	}
+	rows := make([]string, 0, h)
+	for i := m.helpScroll; i < end; i++ {
+		style := lipgloss.NewStyle()
+		// Section headers have a single leading space; every content line
+		// (keybinding entries, nav descriptions) has two, so that's
+		// enough to tell them apart without a separate marker.
+		if strings.TrimSpace(lines[i]) != "" && !strings.HasPrefix(lines[i], "  ") {
+			style = style.Bold(true)
+		}
+		rows = append(rows, style.Render(padOrTruncate(lines[i], w)))
 	}
 	for len(rows) < h {
 		rows = append(rows, strings.Repeat(" ", w))
@@ -257,6 +313,8 @@ func vtColor(c vt10x.Color, fallback lipgloss.Color) lipgloss.Color {
 func (m *Model) renderStatusBar() string {
 	focusLabel := "EDITOR"
 	switch {
+	case m.helpVisible:
+		focusLabel = "HELP"
 	case m.paintOverlay.Active:
 		focusLabel = "PAINT"
 	case m.focus == FocusExplorer:
@@ -279,7 +337,11 @@ func (m *Model) renderStatusBar() string {
 	if label, ok := promptLabels[m.prompt]; ok {
 		left = fmt.Sprintf(" %s%s_", label, m.promptText)
 	}
-	right := fmt.Sprintf("%s  Ln %d, Col %d ", focusLabel, line+1, col+1)
+	branch := ""
+	if b := m.exp.Branch(); b != "" {
+		branch = b + "  "
+	}
+	right := fmt.Sprintf("%s%s  Ln %d, Col %d ", branch, focusLabel, line+1, col+1)
 
 	pad := m.width - runeLen(left) - runeLen(right)
 	if pad < 1 {

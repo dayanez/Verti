@@ -22,6 +22,7 @@ var globalKeymap = map[string]string{
 	"ctrl+p":                  "toggle_paint",
 	"ctrl+s":                  "save",
 	"ctrl+z":                  "undo",
+	"ctrl+a":                  "select_all",
 	"ctrl+y":                  "redo",
 	"ctrl+q":                  "quit",
 	"ctrl+c":                  "copy",
@@ -54,4 +55,14 @@ var globalKeymap = map[string]string{
 	// Find-in-files uses Ctrl+T rather than VS Code's Ctrl+Shift+F, for
 	// the same Ctrl+Shift+<letter> reliability reason as Ctrl+O above.
 	"ctrl+t": "find_in_files",
+	// Quick-open (jump to a file by fuzzy-matching its name) doesn't get
+	// VS Code's Ctrl+P: that's already Paint here. Ctrl+E was free and
+	// unclaimed by any other chord in this table.
+	"ctrl+e": "quick_open",
+	"f1":     "toggle_help",
+	// Ctrl+[ is unusable for this: terminals send the same byte for it as
+	// Esc (bubbletea's own KeyCtrlOpenBracket is literally aliased to
+	// keyESC), which Verti relies on heavily elsewhere. Ctrl+] has no such
+	// collision and was otherwise unclaimed.
+	"ctrl+]": "jump_to_matching_bracket",
 }

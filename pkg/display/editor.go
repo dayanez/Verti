@@ -148,6 +148,39 @@ func (e *Editor) EnsureCursorVisible(buf *buffer.GapBuffer) {
 	}
 }
 
+// ScreenToOffset converts a screen coordinate within the editor's
+// rendered area (0,0 at its top-left, the same coordinate space Render
+// draws into, including the gutter) to a logical rune offset in buf. It
+// reports false, rather than guessing, for a coordinate that isn't over
+// the text itself: outside the viewport, in the gutter, or on the
+// scrollbar column. A y below the last real line clamps to the last
+// line, matching where a click past the end of a short file should
+// reasonably land.
+func (e *Editor) ScreenToOffset(buf *buffer.GapBuffer, x, y int) (offset int, ok bool) {
+	if e.Width <= 0 || e.Height <= 0 || x < 0 || y < 0 || y >= e.Height {
+		return 0, false
+	}
+	totalLines := buf.LineCount()
+	gutterW := gutterWidth(totalLines) // already includes the separating space before the text, see Render
+	textX := x - gutterW
+	if textX < 0 {
+		return 0, false
+	}
+	visibleWidth := e.Width - gutterW - scrollbarWidth
+	if textX >= visibleWidth {
+		return 0, false
+	}
+
+	line := e.ScrollLine + y
+	if line >= totalLines {
+		line = totalLines - 1
+	}
+	if line < 0 {
+		line = 0
+	}
+	return buf.OffsetForLineCol(line, e.ScrollCol+textX), true
+}
+
 // Render draws the buffer's currently-visible lines with syntax
 // highlighting, line numbers, and (when focused) a visible cursor cell.
 // hl may be nil, in which case everything renders with the default style.
@@ -157,10 +190,9 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 	}
 	e.EnsureCursorVisible(buf)
 
-	text := buf.String()
-	lines := strings.Split(text, "\n")
+	totalLines := buf.LineCount()
 	cursorLine, cursorCol := buf.CursorLineCol()
-	gutterW := gutterWidth(len(lines))
+	gutterW := gutterWidth(totalLines)
 
 	selStart, selEnd, hasSel := buf.Selection()
 	var selStartLine, selStartCol, selEndLine, selEndCol int
@@ -173,30 +205,30 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 		visibleWidth = 1
 	}
 
-	lineStartByte := make([]int, len(lines))
-	offset := 0
-	for i, l := range lines {
+	end := e.ScrollLine + e.Height
+	if end > totalLines {
+		end = totalLines
+	}
+
+	// Only materialize the visible line range, not the whole file: on a
+	// huge file, splitting every line into its own string on every single
+	// keystroke (most of them thrown away unrendered) is wasted work and
+	// GC pressure that scales with file size instead of viewport size.
+	visible := buf.LinesRange(e.ScrollLine, end)
+
+	// The highlighter still needs the full source to parse accurately
+	// (see pkg/highlight's incremental parser), but only the visible
+	// range's tokens are worth classifying and walking below.
+	text := buf.String()
+	viewStart := lineByteOffset(text, e.ScrollLine)
+
+	lineStartByte := make([]int, len(visible))
+	offset := viewStart
+	for i, l := range visible {
 		lineStartByte[i] = offset
 		offset += len(l) + 1
 	}
-
-	end := e.ScrollLine + e.Height
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	// Only ask the highlighter to classify the visible line range (plus
-	// whatever a token straddling its edges pulls in), not the whole
-	// file: a huge file's worth of tokens off-screen would otherwise be
-	// computed and thrown away on every single keystroke.
-	viewStart := 0
-	if e.ScrollLine < len(lineStartByte) {
-		viewStart = lineStartByte[e.ScrollLine]
-	}
 	viewEnd := offset
-	if end < len(lineStartByte) {
-		viewEnd = lineStartByte[end]
-	}
 
 	var tokens []highlight.Token
 	if hl != nil {
@@ -207,20 +239,18 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 	}
 
 	tIdx := 0
-	if e.ScrollLine < len(lineStartByte) {
-		start := lineStartByte[e.ScrollLine]
-		for tIdx < len(tokens) && tokens[tIdx].EndByte <= start {
-			tIdx++
-		}
+	for tIdx < len(tokens) && tokens[tIdx].EndByte <= viewStart {
+		tIdx++
 	}
 
-	thumbStart, thumbEnd := e.scrollbarThumb(len(lines))
+	thumbStart, thumbEnd := e.scrollbarThumb(totalLines)
 
 	rows := make([]string, 0, e.Height)
-	for i := e.ScrollLine; i < end; i++ {
+	for vi, ln := range visible {
+		i := e.ScrollLine + vi
 		selFrom, selTo := -1, -1
 		if hasSel && i >= selStartLine && i <= selEndLine {
-			selFrom, selTo = 0, len([]rune(lines[i]))
+			selFrom, selTo = 0, len([]rune(ln))
 			if i == selStartLine {
 				selFrom = selStartCol
 			}
@@ -229,9 +259,8 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 			}
 		}
 		gutter := e.Theme.LineNumber.Width(gutterW - 1).Align(lipgloss.Right).Render(strconv.Itoa(i + 1))
-		rowIdx := i - e.ScrollLine
-		line := e.renderLine(lines[i], lineStartByte[i], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth, selFrom, selTo)
-		rows = append(rows, gutter+" "+line+scrollbarCell(e.Theme, rowIdx, thumbStart, thumbEnd))
+		line := e.renderLine(ln, lineStartByte[vi], tokens, &tIdx, i == cursorLine && focused, cursorCol, visibleWidth, selFrom, selTo)
+		rows = append(rows, gutter+" "+line+scrollbarCell(e.Theme, vi, thumbStart, thumbEnd))
 	}
 	for len(rows) < e.Height {
 		rowIdx := len(rows)
@@ -239,6 +268,22 @@ func (e *Editor) Render(buf *buffer.GapBuffer, hl highlight.Highlighter, focused
 		rows = append(rows, gutter+" "+strings.Repeat(" ", visibleWidth)+scrollbarCell(e.Theme, rowIdx, thumbStart, thumbEnd))
 	}
 	return strings.Join(rows, "\n")
+}
+
+// lineByteOffset returns the byte offset of the start of the given
+// zero-based line within text, using IndexByte to jump newline to newline
+// instead of splitting the whole string into a slice of every line just to
+// find one boundary.
+func lineByteOffset(text string, line int) int {
+	off := 0
+	for i := 0; i < line; i++ {
+		idx := strings.IndexByte(text[off:], '\n')
+		if idx < 0 {
+			return len(text)
+		}
+		off += idx + 1
+	}
+	return off
 }
 
 // scrollbarThumb returns the [start, end) row range (within the

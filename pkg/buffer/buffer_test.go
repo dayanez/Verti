@@ -245,6 +245,21 @@ func TestLineOffset(t *testing.T) {
 	}
 }
 
+func TestOffsetForLineCol(t *testing.T) {
+	gb := NewFromString("abc\ndefgh\nij")
+	if got := gb.OffsetForLineCol(1, 2); got != 6 {
+		t.Fatalf("OffsetForLineCol(1,2) = %d, want 6", got)
+	}
+	// col beyond the line's length clamps to the line's end.
+	if got := gb.OffsetForLineCol(0, 99); got != 3 {
+		t.Fatalf("OffsetForLineCol(0,99) = %d, want 3 (clamped to end of \"abc\")", got)
+	}
+	// line beyond the buffer's range clamps to the last line.
+	if got := gb.OffsetForLineCol(99, 0); got != 10 {
+		t.Fatalf("OffsetForLineCol(99,0) = %d, want 10 (clamped to the last line's start)", got)
+	}
+}
+
 func TestSelectRange(t *testing.T) {
 	gb := NewFromString("hello world")
 	gb.SelectRange(6, 11)
@@ -395,6 +410,40 @@ func TestLargeInsertDoesNotDegradeQuadratically(t *testing.T) {
 	// Half a million characters should complete in well under a second.
 	if elapsed > 2*time.Second {
 		t.Fatalf("NewFromString(500_000 chars) took %v, want well under 2s (possible O(n^2) regression in growGap)", elapsed)
+	}
+}
+
+func TestNavigationNearEndOfLargeFileStaysFast(t *testing.T) {
+	var sb strings.Builder
+	const totalLines = 200_000
+	for i := 0; i < totalLines; i++ {
+		sb.WriteString("line of sample text here\n")
+	}
+	gb := NewFromString(sb.String())
+
+	// Put the cursor near the very end of a large, many-line file: the
+	// worst case for any implementation that scans from the start of the
+	// buffer (or re-splits the whole file into lines) to answer a
+	// line/column question, instead of using the maintained line index.
+	gb.MoveCursorTo(gb.Len() - 10)
+
+	start := time.Now()
+	for i := 0; i < 2000; i++ {
+		gb.MoveUp()
+		gb.MoveDown()
+		gb.MoveEnd()
+		gb.MoveHome()
+		_, _ = gb.CursorLineCol()
+	}
+	elapsed := time.Since(start)
+
+	// 10,000 navigation ops near the end of a 200,000-line (~5MB) file. An
+	// O(file size) implementation (re-splitting the whole file into lines,
+	// or scanning from offset 0 to count newlines, on every call) would
+	// take many seconds here; the line-indexed implementation should
+	// finish in well under one.
+	if elapsed > time.Second {
+		t.Fatalf("10,000 navigation ops near EOF of a large file took %v, want well under 1s (possible O(file size) regression in line/column lookups)", elapsed)
 	}
 }
 

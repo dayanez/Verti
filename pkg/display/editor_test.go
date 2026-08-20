@@ -1,6 +1,7 @@
 package display
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -8,6 +9,72 @@ import (
 
 	"github.com/dommcpro/verti/pkg/buffer"
 )
+
+// TestMain forces color output for the whole package before any test
+// runs. lipgloss's default renderer lazily detects terminal capability
+// on first use and caches the result for the rest of the process, so
+// setting this per-test with t.Setenv is unreliable: whichever test
+// happens to touch a style first "locks in" the profile for every test
+// that follows it in the same binary.
+func TestMain(m *testing.M) {
+	os.Setenv("CLICOLOR_FORCE", "1")
+	os.Exit(m.Run())
+}
+
+func TestScreenToOffsetMapsGutterAndTextCorrectly(t *testing.T) {
+	gb := buffer.NewFromString("line one\nline two\nline three")
+	e := New()
+	e.SetSize(30, 10)
+	e.Render(gb, nil, true) // establishes scroll state the same way a real frame would
+
+	// gutterWidth(3 lines) = len("3")+2 = 3: gutter field width 2, plus
+	// the one separating space, so column 3 is the first text column.
+	if _, ok := e.ScreenToOffset(gb, 0, 0); ok {
+		t.Fatal("clicking in the gutter (column 0) should report ok=false")
+	}
+	if _, ok := e.ScreenToOffset(gb, 2, 0); ok {
+		t.Fatal("clicking on the gutter/text separator (column 2) should report ok=false")
+	}
+	off, ok := e.ScreenToOffset(gb, 3, 0)
+	if !ok || off != 0 {
+		t.Fatalf("ScreenToOffset(3,0) = (%d,%v), want (0,true): the very first character of line 0", off, ok)
+	}
+	off, ok = e.ScreenToOffset(gb, 3+5, 1)
+	if !ok {
+		t.Fatal("ScreenToOffset for a valid text cell returned ok=false")
+	}
+	line, col := gb.OffsetLineCol(off)
+	if line != 1 || col != 5 {
+		t.Fatalf("ScreenToOffset(8,1) -> offset %d = (line %d, col %d), want (line 1, col 5)", off, line, col)
+	}
+}
+
+func TestScreenToOffsetClampsPastLastLine(t *testing.T) {
+	gb := buffer.NewFromString("only one line")
+	e := New()
+	e.SetSize(30, 10)
+	e.Render(gb, nil, true)
+
+	off, ok := e.ScreenToOffset(gb, 3, 5) // row 5, well past the single real line
+	if !ok {
+		t.Fatal("clicking below the last line should still report ok=true, clamped to it")
+	}
+	line, _ := gb.OffsetLineCol(off)
+	if line != 0 {
+		t.Fatalf("clamped line = %d, want 0 (the only, last line)", line)
+	}
+}
+
+func TestScreenToOffsetRejectsScrollbarColumn(t *testing.T) {
+	gb := buffer.NewFromString("hi")
+	e := New()
+	e.SetSize(10, 5)
+	e.Render(gb, nil, true)
+
+	if _, ok := e.ScreenToOffset(gb, e.Width-1, 0); ok {
+		t.Fatal("clicking the rightmost (scrollbar) column should report ok=false")
+	}
+}
 
 func TestScrollbarThumbFillsTrackWhenEverythingFits(t *testing.T) {
 	e := New()

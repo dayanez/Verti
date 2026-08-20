@@ -96,6 +96,56 @@ func TestFilesSkipsOversizedFiles(t *testing.T) {
 	}
 }
 
+func TestFilesSkipsGitignoredDirectories(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore"), "node_modules/\n")
+	writeFile(t, filepath.Join(dir, "node_modules", "dep", "index.js"), "needle in a dependency\n")
+	writeFile(t, filepath.Join(dir, "real.go"), "needle in real source\n")
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1 (node_modules should be skipped): %+v", len(matches), matches)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(matches[0].Path), "real.go") {
+		t.Errorf("match path = %q, want it to be real.go", matches[0].Path)
+	}
+}
+
+func TestListFilesReturnsNamesNotContent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore"), "node_modules/\n")
+	writeFile(t, filepath.Join(dir, "node_modules", "dep", "index.js"), "ignored\n")
+	writeFile(t, filepath.Join(dir, "a.go"), "package a\n")
+	writeFile(t, filepath.Join(dir, "sub", "b.go"), "package b\n")
+	writeFile(t, filepath.Join(dir, ".git", "config"), "should be skipped\n")
+
+	names, err := ListFiles(dir)
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	want := map[string]bool{"a.go": true, "sub/b.go": true, ".gitignore": true}
+	got := map[string]bool{}
+	for _, n := range names {
+		got[filepath.ToSlash(n)] = true
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("ListFiles() missing %q, got %v", name, names)
+		}
+	}
+	if got["node_modules/dep/index.js"] {
+		t.Error("ListFiles() should not include gitignored node_modules")
+	}
+	for name := range got {
+		if strings.Contains(name, ".git/") {
+			t.Errorf("ListFiles() should not include .git contents, got %q", name)
+		}
+	}
+}
+
 func TestFilesReturnsNilForEmptyQuery(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.go"), "anything\n")
