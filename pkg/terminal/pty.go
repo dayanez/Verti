@@ -159,11 +159,17 @@ func (m *Manager) Running() bool {
 // even if no subshell is running.
 //
 // It clears m.pty first so any new Read/Write/Resize call fails fast with
-// ErrNotRunning, then kills the subshell process (which unblocks a Read
-// already in flight, since the pty's other end going away delivers it
-// EOF), then waits for that call to actually return before closing the
-// pty handle itself -- otherwise a Read blocked in a syscall on the
-// handle at the moment it's closed would be a use-after-close race.
+// ErrNotRunning, then kills the subshell process and closes the pty
+// itself. Closing unblocks a Read already in flight: on Unix, go-pty
+// keeps its own handle to the slave side open independently of the
+// child process, so killing the child alone never delivers EOF to a
+// blocked master Read, and waiting for that Read before closing would
+// deadlock forever. Closing the underlying *os.File out from under a
+// blocked Read is safe and is exactly what it's designed for -- the
+// runtime poller interrupts the pending syscall and returns an error
+// rather than racing on the descriptor. Only after that do we wait for
+// the call to actually return, so Close doesn't return until any
+// in-flight Read/Write/Resize has finished observing the error.
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	p := m.pty
@@ -180,6 +186,7 @@ func (m *Manager) Close() error {
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
+	err := p.Close()
 	m.wg.Wait()
-	return p.Close()
+	return err
 }
