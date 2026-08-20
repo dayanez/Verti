@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dommcpro/verti/pkg/ignore"
+	"github.com/dayanez/Verti/pkg/ignore"
 )
 
 // Match is one line, in one file, that contained the search text.

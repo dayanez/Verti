@@ -151,7 +151,7 @@ func TestExplorerKeyRRenamesSelectedEntryRetargetsOpenTab(t *testing.T) {
 }
 
 func TestExplorerKeyDDeletesOnConfirmUntitlesOpenTab(t *testing.T) {
-	m := newTestModel(t, "hello") // opens scratch.txt as the active tab
+	m := newTestModel(t, "hello")                 // opens scratch.txt as the active tab
 	sendKeys(m, key(tea.KeyEnd), runes(" world")) // dirty the buffer, so its unsaved content matters
 	focusExplorer(m)
 

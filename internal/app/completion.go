@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/dommcpro/verti/pkg/complete"
+	"github.com/dayanez/Verti/pkg/complete"
 )
 
 // tryWordCompletion handles Tab when there's no selection to indent or

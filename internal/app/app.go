@@ -9,14 +9,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dommcpro/verti/pkg/buffer"
-	"github.com/dommcpro/verti/pkg/display"
-	"github.com/dommcpro/verti/pkg/explorer"
-	"github.com/dommcpro/verti/pkg/highlight"
-	"github.com/dommcpro/verti/pkg/luaengine"
-	"github.com/dommcpro/verti/pkg/paint"
-	"github.com/dommcpro/verti/pkg/search"
-	"github.com/dommcpro/verti/pkg/terminal"
+	"github.com/dayanez/Verti/pkg/buffer"
+	"github.com/dayanez/Verti/pkg/display"
+	"github.com/dayanez/Verti/pkg/explorer"
+	"github.com/dayanez/Verti/pkg/highlight"
+	"github.com/dayanez/Verti/pkg/luaengine"
+	"github.com/dayanez/Verti/pkg/paint"
+	"github.com/dayanez/Verti/pkg/search"
+	"github.com/dayanez/Verti/pkg/terminal"
 )
 
 // Focus identifies which pane currently receives non-global keystrokes.

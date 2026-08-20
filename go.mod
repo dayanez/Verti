@@ -1,4 +1,4 @@
-module github.com/dommcpro/verti
+module github.com/dayanez/Verti
 
 go 1.25.0
 

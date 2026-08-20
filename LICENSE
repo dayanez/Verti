@@ -1,6 +1,6 @@
-MIT License
+Verti License (MIT with Attribution)
 
-Copyright (c) 2026 dommcpro
+Copyright (c) 2026 dayanez
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -9,8 +9,22 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice, this permission notice, and the attribution
+   notice in clause 2 shall be included in all copies or substantial
+   portions of the Software, including modified and derivative versions.
+
+2. Any distribution of the Software, or of a work derived from it, must
+   clearly and visibly credit dayanez as the original author and Verti
+   as the original project, in that copy's documentation (its README, or
+   equivalent) and, where reasonably practical, somewhere in the software
+   itself (an "about" screen, a startup message, or similar).
+
+3. You may fork, rename, and build on the Software freely, but you may
+   not present it, or a work derived from it, as your own original
+   creation, and you may not remove, obscure, or otherwise misrepresent
+   the attribution required by clause 2 in a way that would lead a
+   reasonable person to believe the work originated with you rather than
+   with dayanez.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

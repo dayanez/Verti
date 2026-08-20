@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/muesli/termenv"
 
-	"github.com/dommcpro/verti/pkg/paint"
+	"github.com/dayanez/Verti/pkg/paint"
 )
 
 // osClipboard abstracts the system clipboard so tests can substitute a

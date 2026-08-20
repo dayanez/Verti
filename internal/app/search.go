@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dommcpro/verti/pkg/search"
+	"github.com/dayanez/Verti/pkg/search"
 )
 
 // fileSearchResultMsg carries a background search's results back into

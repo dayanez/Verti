@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dommcpro/verti/pkg/gitstatus"
+	"github.com/dayanez/Verti/pkg/gitstatus"
 )
 
 // gitStatusMsg carries a background git-status reload's result back into

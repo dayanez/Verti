@@ -1,8 +1,8 @@
 package app
 
 import (
-	"github.com/dommcpro/verti/pkg/buffer"
-	"github.com/dommcpro/verti/pkg/session"
+	"github.com/dayanez/Verti/pkg/buffer"
+	"github.com/dayanez/Verti/pkg/session"
 )
 
 // restoreSession loads the workspace's saved session, if any, and

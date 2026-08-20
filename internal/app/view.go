@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hinshun/vt10x"
 
-	"github.com/dommcpro/verti/pkg/highlight"
-	"github.com/dommcpro/verti/pkg/paint"
+	"github.com/dayanez/Verti/pkg/highlight"
+	"github.com/dayanez/Verti/pkg/paint"
 )
 
 func (m *Model) View() string {

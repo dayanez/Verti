@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dommcpro/verti/pkg/search"
+	"github.com/dayanez/Verti/pkg/search"
 )
 
 // maxQuickOpenResults caps how many fuzzy matches are kept and shown, so

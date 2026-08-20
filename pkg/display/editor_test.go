@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dommcpro/verti/pkg/buffer"
+	"github.com/dayanez/Verti/pkg/buffer"
 )
 
 // TestMain forces color output for the whole package before any test

@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dommcpro/verti/pkg/buffer"
-	"github.com/dommcpro/verti/pkg/highlight"
+	"github.com/dayanez/Verti/pkg/buffer"
+	"github.com/dayanez/Verti/pkg/highlight"
 )
 
 // openBuffer holds one open file's editing state. Switching tabs snapshots

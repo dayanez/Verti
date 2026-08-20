@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dommcpro/verti/internal/app"
+	"github.com/dayanez/Verti/internal/app"
 )
 
 func main() {

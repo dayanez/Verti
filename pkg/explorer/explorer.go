@@ -15,8 +15,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/dommcpro/verti/pkg/gitstatus"
-	"github.com/dommcpro/verti/pkg/ignore"
+	"github.com/dayanez/Verti/pkg/gitstatus"
+	"github.com/dayanez/Verti/pkg/ignore"
 )
 
 // ErrNothingSelected is returned by Rename and Delete when the tree is
