@@ -3,19 +3,23 @@ package app
 // globalToggleTerminalChord is pulled out as a constant because
 // handleKey needs to recognize it even while the terminal pane owns
 // focus and everything else is being forwarded to the shell.
-const globalToggleTerminalChord = "ctrl+@"
+const globalToggleTerminalChord = "ctrl+j"
 
 // globalKeymap holds chords that work the same regardless of which pane
 // has focus, VS Code's model of "global" commands. Focus-specific keys
 // (arrows, Enter, Tab, typed characters, ...) are handled directly by
 // each pane's key handler instead of going through this table.
 //
-// Ctrl+` (backtick) is bound as "ctrl+@": bubbletea's key parser reports
-// Ctrl+Backtick using the same code as Ctrl+@ (they both send the NUL
-// control byte over the wire, see charmbracelet/bubbletea's key.go,
-// which documents this explicitly), so binding "ctrl+@" is what actually
-// catches Ctrl+`. If your terminal sends something else for that chord,
-// override it from init.lua with verti.keymap("ctrl+@", "toggle_terminal").
+// The terminal toggle deliberately isn't bound to Ctrl+` (a natural
+// mnemonic, but unusable): bubbletea only recognizes Ctrl+<punctuation>
+// for the handful of keys with a real ASCII control-code mapping
+// (@ [ \ ] ^ _ ?), backtick isn't one of them, and outside that set
+// bubbletea's Key.String() doesn't even report a "ctrl+" prefix, so the
+// chord is indistinguishable from the bare key. Ctrl+<letter> chords are
+// the one category bubbletea resolves the same way on every platform
+// (including Windows' native console input, a separate code path from
+// ANSI terminals with its own gaps), which is why every chord below is
+// either that or a multi-key sequence with an established meaning.
 var globalKeymap = map[string]string{
 	"ctrl+b":                  "toggle_sidebar",
 	globalToggleTerminalChord: "toggle_terminal",

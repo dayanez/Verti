@@ -59,7 +59,7 @@ verti path/to/dir     # open a specific directory
 | Chord | Action |
 |---|---|
 | `Ctrl+B` | Toggle the file explorer |
-| `Ctrl+\`` | Toggle the embedded shell |
+| `Ctrl+J` | Toggle the embedded shell |
 | `Ctrl+P` | Toggle the paint overlay |
 | `Ctrl+S` / `Ctrl+O` | Save / Save As |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |

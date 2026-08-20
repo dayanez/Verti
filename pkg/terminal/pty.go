@@ -1,5 +1,5 @@
 // Package terminal manages the embedded interactive subshell shown in the
-// bottom pane (toggled with Ctrl+`). It wraps a cross-platform PTY
+// bottom pane (toggled with Ctrl+J). It wraps a cross-platform PTY
 // (Unix pty on Linux/macOS, ConPTY on Windows via aymanbagabas/go-pty) so
 // the rest of the editor only ever deals with plain Read/Write/Resize. It
 // also feeds every byte read from the PTY into a vt10x virtual terminal,

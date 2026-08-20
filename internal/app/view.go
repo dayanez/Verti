@@ -213,7 +213,7 @@ func (m *Model) renderTerminalPane() string {
 	if m.termWidth < 1 || m.termHeight < 1 {
 		return ""
 	}
-	title := lipgloss.NewStyle().Reverse(true).Render(padOrTruncate(" shell (Ctrl+` to hide) ", m.termWidth))
+	title := lipgloss.NewStyle().Reverse(true).Render(padOrTruncate(" shell (Ctrl+J to hide) ", m.termWidth))
 
 	contentHeight := m.termHeight - 1
 	if contentHeight < 1 {

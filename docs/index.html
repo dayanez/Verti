@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verti</title>
+<meta name="description" content="Verti is a fast, minimal terminal code editor written in Go.">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="top">
+  <h1><a href="index.html">Verti</a></h1>
+  <img src="logo.svg" width="40" height="40" alt="Verti">
+</div>
+<nav>
+  <a href="https://github.com/dayanez/Verti" target="_blank">GitHub</a> &middot;
+  <a href="https://github.com/dayanez/Verti/blob/master/LICENSE" target="_blank">License</a>
+</nav>
+
+<hr>
+
+<p>
+<a href="https://github.com/dayanez/Verti" target="_blank">Verti</a> is a fast, minimal
+terminal code editor written in Go. Gap buffer editing, real tree-sitter syntax
+highlighting, a file explorer, and an embedded shell, all in one static binary.
+No LSP, no plugins, no telemetry, just a keyboard-driven editor for getting work done.
+</p>
+
+<div class="box">
+  <div>
+    <h4>Install</h4>
+<pre>git clone https://github.com/dayanez/Verti
+cd Verti
+make build</pre>
+  </div>
+  <div>
+    <h4>Requires</h4>
+    Go 1.25+ and a cgo-capable C compiler
+    (<a href="https://ziglang.org/" target="_blank">Zig</a>, gcc, or clang).
+  </div>
+</div>
+
+<h4>Keybindings</h4>
+<table>
+  <tr><td><code>Ctrl+B</code></td><td>Toggle the file explorer</td></tr>
+  <tr><td><code>Ctrl+J</code></td><td>Toggle the embedded shell</td></tr>
+  <tr><td><code>Ctrl+P</code></td><td>Toggle the paint overlay</td></tr>
+  <tr><td><code>Ctrl+S</code> / <code>Ctrl+O</code></td><td>Save / Save As</td></tr>
+  <tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>Undo / redo</td></tr>
+  <tr><td><code>Ctrl+F</code> / <code>Ctrl+R</code></td><td>Find / replace all</td></tr>
+  <tr><td><code>Ctrl+/</code></td><td>Toggle comment</td></tr>
+  <tr><td><code>Ctrl+Q</code></td><td>Quit</td></tr>
+</table>
+<p><a href="https://github.com/dayanez/Verti#usage" target="_blank">Full keymap</a> is on the README, or press <code>F1</code> inside the editor.</p>
+
+<footer>
+  <a href="https://github.com/dayanez/Verti/blob/master/LICENSE" target="_blank">Verti License (MIT with Attribution)</a>.
+  Copyright dayanez.
+</footer>
+
+</body>
+</html>
