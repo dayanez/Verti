@@ -8,8 +8,6 @@
   █    █████  █   █    █    █████
 ```
 
-[![build](https://github.com/dayanez/Verti/actions/workflows/build.yml/badge.svg)](https://github.com/dayanez/Verti/actions/workflows/build.yml)
-[![Go version](https://img.shields.io/github/go-mod/go-version/dayanez/Verti)](go.mod)
 
 A fast, minimal terminal code editor written in Go. Gap-buffer editing,
 real tree-sitter syntax highlighting, a file explorer, and an embedded
