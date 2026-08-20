@@ -1,18 +1,10 @@
-```
-█   █  █████  ████   █████  █████
-█   █  █      █   █    █      █
-█   █  █      █   █    █      █
-█   █  ████   ████     █      █
- █ █   █      █  █     █      █
- █ █   █      █   █    █      █
-  █    █████  █   █    █    █████
-```
+<p align="center"><img src="docs/logo.svg" width="56" height="56" alt="Verti"></p>
+<h1 align="center">Verti</h1>
+<p align="center">A fast, minimal terminal code editor written in Go.</p>
 
-
-A fast, minimal terminal code editor written in Go. Gap-buffer editing,
-real tree-sitter syntax highlighting, a file explorer, and an embedded
-shell, all in one static binary. No LSP, no plugins, no telemetry: just a
-keyboard-driven editor for getting work done.
+Gap-buffer editing, real tree-sitter syntax highlighting, a file explorer,
+and an embedded shell, all in one static binary. No LSP, no plugins, no
+telemetry: just a keyboard-driven editor for getting work done.
 
 ## Features
 
@@ -27,7 +19,7 @@ keyboard-driven editor for getting work done.
 - ASCII box-drawing paint overlay (`Ctrl+P`) for dropping diagrams into
   comments.
 
-## Building from source
+## Build
 
 Requires Go 1.25+ and a cgo-capable C compiler. [Zig](https://ziglang.org/)
 works well as a lightweight one on any OS (`zig cc`); `gcc`/`clang`/MSVC
