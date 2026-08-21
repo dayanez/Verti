@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// ---------------- Keybinding Help Overlay ----------------
+
 // handleHelpKey drives the keybinding overlay while it's showing: F1 or
 // Esc closes it, arrows/PgUp/PgDown scroll. It owns every keystroke while
 // active (see handleKey), the same as paint mode, so nothing underneath

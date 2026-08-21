@@ -16,6 +16,8 @@ import (
 	"github.com/dayanez/Verti/pkg/highlight"
 )
 
+// ---------------- Theme ----------------
+
 // Theme holds the styles used to render each highlight.Kind, plus the
 // gutter and cursor. Colors are chosen to be readable on both light and
 // dark 256-color terminals.
@@ -91,6 +93,8 @@ func (t Theme) styleFor(kind highlight.Kind) lipgloss.Style {
 	}
 }
 
+// ---------------- Editor type & construction ----------------
+
 // Editor renders a viewport onto a buffer.GapBuffer.
 //
 // ScrollCol is a screen column, not a rune index: a line's rune index and
@@ -121,6 +125,8 @@ func (e *Editor) tabWidth() int {
 	}
 	return e.TabWidth
 }
+
+// ---------------- Visual column & tab-width helpers ----------------
 
 // cellWidth returns how many terminal columns rune r occupies when it
 // starts at screen column atCol: a tab's width depends on where it falls
@@ -162,6 +168,8 @@ func runeIndexAtVisualCol(runes []rune, target, tabWidth int) int {
 	}
 	return len(runes)
 }
+
+// ---------------- Sizing & scrolling ----------------
 
 // SetSize sets the viewport dimensions (including the line-number gutter).
 func (e *Editor) SetSize(w, h int) {
@@ -212,6 +220,8 @@ func (e *Editor) EnsureCursorVisible(buf *buffer.GapBuffer) {
 	}
 }
 
+// ---------------- Mouse coordinate conversion ----------------
+
 // ScreenToOffset converts a screen coordinate within the editor's
 // rendered area (0,0 at its top-left, the same coordinate space Render
 // draws into, including the gutter) to a logical rune offset in buf. It
@@ -249,6 +259,8 @@ func (e *Editor) ScreenToOffset(buf *buffer.GapBuffer, x, y int) (offset int, ok
 	}
 	return buf.OffsetForLineCol(line, col), true
 }
+
+// ---------------- Rendering ----------------
 
 // Render draws the buffer's currently-visible lines with syntax
 // highlighting, line numbers, and (when focused) a visible cursor cell.

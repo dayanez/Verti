@@ -2,6 +2,8 @@ package paint
 
 import "strings"
 
+// ---------------- Canvas ----------------
+
 // Canvas accumulates strokes drawn via DrawLine and resolves them into
 // Unicode box-drawing characters: orthogonal cells are joined into proper
 // corners/junctions (┌┐└┘├┤┬┴┼) by inspecting each cell's four immediate
@@ -15,6 +17,8 @@ type Canvas struct {
 func NewCanvas() *Canvas {
 	return &Canvas{cells: make(map[Point]struct{}), diag: make(map[Point]rune)}
 }
+
+// ---------------- Drawing ----------------
 
 // DrawLine walks the Bresenham path from (x0,y0) to (x1,y1) and marks each
 // step's cell, classifying each step as horizontal, vertical, or diagonal
@@ -42,6 +46,8 @@ func (c *Canvas) hasCell(x, y int) bool {
 	_, ok := c.cells[Point{x, y}]
 	return ok
 }
+
+// ---------------- Resolution ----------------
 
 // junctionRune picks the box-drawing character for a cell given which of
 // its four cardinal neighbors are also part of the drawing.
@@ -87,6 +93,8 @@ func (c *Canvas) Resolve() map[Point]rune {
 	}
 	return out
 }
+
+// ---------------- Bounds & rendering ----------------
 
 // Bounds returns the smallest rectangle containing every drawn cell. ok is
 // false for an empty canvas.
@@ -142,6 +150,8 @@ func (c *Canvas) Render() []string {
 	}
 	return rows
 }
+
+// ---------------- Reset ----------------
 
 // Empty reports whether anything has been drawn.
 func (c *Canvas) Empty() bool { return len(c.cells) == 0 && len(c.diag) == 0 }

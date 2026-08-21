@@ -1,5 +1,7 @@
 package app
 
+// ---------------- Global Keymap ----------------
+
 // globalToggleTerminalChord is pulled out as a constant because
 // handleKey needs to recognize it even while the terminal pane owns
 // focus and everything else is being forwarded to the shell.

@@ -2,6 +2,8 @@ package app
 
 import "strings"
 
+// ---------------- Auto-Pairing Brackets & Quotes ----------------
+
 // autoPairs maps an opening delimiter to its closer. Quotes map to
 // themselves since the same rune opens and closes them; handleAutoPairRune
 // treats that case specially (typing through an existing one instead of
@@ -80,6 +82,8 @@ func (m *Model) cursorBetweenEmptyPair() bool {
 	closer, ok := autoPairs[[]rune(before)[0]]
 	return ok && string(closer) == after
 }
+
+// ---------------- Smart-Indent on Enter ----------------
 
 // blockIndentContext reports, for the text immediately around the cursor,
 // whether Enter should add an extra indent level (the line up to the

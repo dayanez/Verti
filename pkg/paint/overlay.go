@@ -1,5 +1,7 @@
 package paint
 
+// ---------------- Construction ----------------
+
 // Overlay is the paint mode's state machine: whether the modal is active,
 // the in-progress drag (if any), and the canvas being drawn on. It has no
 // dependency on bubbletea or any terminal library; the app layer feeds it
@@ -17,6 +19,8 @@ type Overlay struct {
 func NewOverlay() *Overlay {
 	return &Overlay{Canvas: NewCanvas()}
 }
+
+// ---------------- Drag lifecycle ----------------
 
 // Toggle flips whether the overlay is active, ending any in-progress drag.
 func (o *Overlay) Toggle() {
@@ -56,6 +60,8 @@ func (o *Overlay) Reset() {
 	o.Canvas.Clear()
 	o.dragging = false
 }
+
+// ---------------- Output ----------------
 
 // Finish renders the canvas as a language-appropriate comment block for
 // filename, then clears the canvas. It does not change Active; the

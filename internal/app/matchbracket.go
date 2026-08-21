@@ -1,5 +1,7 @@
 package app
 
+// ---------------- Matching Bracket Jump ----------------
+
 // bracketPairs and bracketOpeners are derived from autoPairs (see
 // editpairs.go), minus the quote entries: quotes aren't nested the way
 // brackets are, so "jump to match" doesn't apply to them. Deriving these

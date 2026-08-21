@@ -59,6 +59,8 @@ func LoadDefault() (*Config, error) {
 	return LoadConfig(path)
 }
 
+// ---------------- Lua evaluation ----------------
+
 // LoadConfig evaluates the Lua script at path and returns the resulting
 // Config. On error, it still returns whatever was successfully configured
 // before the failure, layered onto the defaults, so a script that fails

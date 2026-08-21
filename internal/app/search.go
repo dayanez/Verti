@@ -9,6 +9,8 @@ import (
 	"github.com/dayanez/Verti/pkg/search"
 )
 
+// ---------------- Find in Files ----------------
+
 // fileSearchResultMsg carries a background search's results back into
 // Update once search.Files finishes walking the workspace.
 type fileSearchResultMsg struct {

@@ -30,6 +30,8 @@ import (
 	"github.com/smacker/go-tree-sitter/yaml"
 )
 
+// ---------------- Language Registration ----------------
+
 // registerTreeSitterLanguages wires every bundled tree-sitter grammar into
 // r under its conventional file extensions.
 func registerTreeSitterLanguages(r *Registry) {
@@ -69,6 +71,8 @@ func registerTreeSitterLanguages(r *Registry) {
 	// (lowercased) filename instead -- see Registry.For.
 	r.Register("dockerfile", func() Highlighter { return newASTHighlighter(dockerfile.GetLanguage(), dockerfileKeywords) })
 }
+
+// ---------------- Incremental Parsing ----------------
 
 // astHighlighter classifies tokens by walking the leaves of a tree-sitter
 // parse tree, using each leaf's grammar node type (and, for identifiers,
@@ -179,6 +183,8 @@ func byteToPoint(src []byte, byteOff int) sitter.Point {
 	return sitter.Point{Row: uint32(row), Column: uint32(col)}
 }
 
+// ---------------- AST Highlighter ----------------
+
 type astHighlighter struct {
 	*incrementalParser
 	keywords map[string]Kind
@@ -277,6 +283,8 @@ var numericLeafTypes = map[string]bool{
 	"number": true, "number_literal": true, "decimal_literal": true,
 	"hex_literal": true, "octal_literal": true, "imaginary_literal": true,
 }
+
+// ---------------- Language Keyword Tables ----------------
 
 var goKeywords = map[string]Kind{
 	"func": KindKeyword, "package": KindKeyword, "import": KindKeyword, "return": KindKeyword,
@@ -470,6 +478,8 @@ var dockerfileKeywords = map[string]Kind{
 	"USER": KindKeyword, "WORKDIR": KindKeyword, "ARG": KindKeyword, "ONBUILD": KindKeyword, "STOPSIGNAL": KindKeyword,
 	"HEALTHCHECK": KindKeyword, "SHELL": KindKeyword, "AS": KindKeyword,
 }
+
+// ---------------- Markdown Highlighter ----------------
 
 // markdownHighlighter classifies whole composite nodes (headings, code
 // spans, emphasis, links) rather than leaves, since markdown's grammar

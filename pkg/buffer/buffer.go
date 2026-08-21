@@ -15,6 +15,8 @@ import (
 
 const defaultGapSize = 64
 
+// ---------------- Gap buffer type ----------------
+
 // GapBuffer is a thread-safe, mutable text buffer. The zero value is not
 // usable; construct one with New or NewFromString.
 type GapBuffer struct {
@@ -74,6 +76,8 @@ type GapBuffer struct {
 
 const defaultFilePerm = 0o644
 
+// ---------------- Construction ----------------
+
 // New returns an empty buffer.
 func New() *GapBuffer {
 	return &GapBuffer{
@@ -94,6 +98,8 @@ func NewFromString(s string) *GapBuffer {
 	gb.dirty = false
 	return gb
 }
+
+// ---------------- File I/O ----------------
 
 // LoadFile reads path and returns a buffer containing its contents. CRLF
 // line endings are normalized to LF and remembered, so SaveFile writes the
@@ -142,6 +148,8 @@ func (gb *GapBuffer) SaveFile(path string) error {
 	gb.mu.Unlock()
 	return nil
 }
+
+// ---------------- Content queries & caching ----------------
 
 // Dirty reports whether the buffer has unsaved changes.
 func (gb *GapBuffer) Dirty() bool {
@@ -205,6 +213,8 @@ func (gb *GapBuffer) markDirtyLocked() {
 	gb.dirty = true
 	gb.version++
 }
+
+// ---------------- Line & text access ----------------
 
 // runeAtLocked returns the rune at logical offset i (0 <= i < logical
 // length), reading straight out of the underlying array around the gap
@@ -285,6 +295,8 @@ func (gb *GapBuffer) lineIndexForOffsetLocked(offset int) int {
 	i := sort.Search(len(gb.lineStarts), func(i int) bool { return gb.lineStarts[i] > offset })
 	return i - 1
 }
+
+// ---------------- Editing & cursor movement ----------------
 
 // CursorOffset returns the current cursor position as a rune offset into
 // the logical text.
@@ -516,6 +528,8 @@ func (gb *GapBuffer) MoveWordLeft() {
 	_, gb.desiredCol = gb.lineColLocked(gb.gapStart)
 }
 
+// ---------------- Offset conversion & restore ----------------
+
 // LineOffset returns the starting logical offset of the given zero-based
 // line, clamped to the buffer's actual line range.
 func (gb *GapBuffer) LineOffset(line int) int {
@@ -621,6 +635,8 @@ func (gb *GapBuffer) CurrentLineRange() (start, end int) {
 	return start, end
 }
 
+// ---------------- Selection ----------------
+
 // StartSelection anchors a selection at the current cursor position, if one
 // isn't already active. Safe to call on every extend-selection keystroke.
 func (gb *GapBuffer) StartSelection() {
@@ -698,6 +714,8 @@ func (gb *GapBuffer) DeleteSelection() string {
 	}
 	return gb.DeleteRange(start, end)
 }
+
+// ---------------- Internal helpers ----------------
 
 func (gb *GapBuffer) clamp(offset int) int {
 	logicalLen := gb.logicalLenLocked()

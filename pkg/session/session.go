@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 )
 
+// ---------------- Types ----------------
+
 // Tab is one open file's saved editing position.
 type Tab struct {
 	Filename     string
@@ -26,6 +28,8 @@ type Session struct {
 	ActiveTab int
 	Tabs      []Tab
 }
+
+// ---------------- Session path ----------------
 
 // pathFor returns the session file for workspace root: one file per
 // workspace, named by a hash of its absolute path, under the same config
@@ -42,6 +46,8 @@ func pathFor(root string) (string, error) {
 	sum := sha256.Sum256([]byte(filepath.ToSlash(abs)))
 	return filepath.Join(dir, "verti", "sessions", hex.EncodeToString(sum[:8])+".json"), nil
 }
+
+// ---------------- Persistence ----------------
 
 // Load reads the saved session for root. A missing file, an unwritable
 // config directory, or a corrupt session file all return a zero-value

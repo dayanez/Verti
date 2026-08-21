@@ -15,6 +15,8 @@ import (
 	"github.com/dayanez/Verti/pkg/ignore"
 )
 
+// ---------------- Types & limits ----------------
+
 // Match is one line, in one file, that contained the search text.
 type Match struct {
 	// Path is relative to the root Files was called with.
@@ -34,6 +36,8 @@ const maxFileSize = 2 << 20 // 2MB
 const maxMatches = 500
 
 var errStop = errors.New("search: match limit reached")
+
+// ---------------- Traversal ----------------
 
 // walkFiles calls visit for every regular file under root, skipping
 // dot-directories (.git and the like) and anything the workspace root's
@@ -63,6 +67,8 @@ func walkFiles(root string, visit func(path, rel string, d fs.DirEntry) error) e
 		return visit(path, ignore.RelSlash(root, path), d)
 	})
 }
+
+// ---------------- Full-text search ----------------
 
 // Files searches every regular file under root for substr, a plain
 // case-sensitive substring match (no regex or globbing, keeping results
@@ -110,6 +116,8 @@ func Files(root, substr string) ([]Match, error) {
 	}
 	return out, nil
 }
+
+// ---------------- File listing ----------------
 
 // ListFiles returns the workspace-relative, slash-separated path of every
 // regular file under root that Files would be willing to search (same

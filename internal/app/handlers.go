@@ -13,6 +13,8 @@ import (
 	"github.com/dayanez/Verti/pkg/paint"
 )
 
+// ---------------- Clipboard abstraction ----------------
+
 // osClipboard abstracts the system clipboard so tests can substitute a
 // fake instead of touching the real one, which would be flaky in a
 // headless CI environment and rude to clobber on a developer's own
@@ -26,6 +28,8 @@ type realOSClipboard struct{}
 
 func (realOSClipboard) ReadAll() (string, error)   { return clipboard.ReadAll() }
 func (realOSClipboard) WriteAll(text string) error { return clipboard.WriteAll(text) }
+
+// ---------------- Key routing ----------------
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	chord := msg.String()
@@ -75,6 +79,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditorKey(msg)
 	}
 }
+
+// ---------------- Global commands ----------------
 
 func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 	switch name {
@@ -236,6 +242,8 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ---------------- Editor key handling ----------------
+
 func (m *Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Captured before the reset below so the Tab case can tell "this Tab
 	// immediately follows a completion" (cycle to the next candidate)
@@ -374,6 +382,8 @@ func (m *Model) handleEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ---------------- Clipboard operations ----------------
+
 // copySelectionOrLine copies the active selection to the clipboard, or the
 // current line (micro/VS Code's "nothing selected" fallback) if none.
 func (m *Model) copySelectionOrLine() {
@@ -441,6 +451,8 @@ func (m *Model) setClipboard(text string) {
 	_ = m.osClipboard.WriteAll(text)
 	termenv.Copy(text)
 }
+
+// ---------------- Prompts ----------------
 
 // closePrompt returns to no prompt being active, clearing any text typed
 // into it and any in-progress replace-flow state (harmless to clear even
@@ -549,6 +561,8 @@ func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cm
 	return m, cmd
 }
 
+// ---------------- Find & goto ----------------
+
 // findNext selects the next occurrence of query after the cursor, wrapping
 // around to the start of the buffer if nothing is found before the end.
 // Called on every Enter while the find prompt is open, so repeating Enter
@@ -606,6 +620,8 @@ func (m *Model) gotoLine(input string) {
 	line, _ := m.buf.CursorLineCol()
 	m.status = fmt.Sprintf("line %d", line+1)
 }
+
+// ---------------- Line editing & indentation ----------------
 
 // duplicateLine inserts a copy of the line under the cursor directly below
 // it, leaving the cursor on the new copy at the same column.
@@ -758,6 +774,8 @@ func leadingSpaces(s string, max int) int {
 	return n
 }
 
+// ---------------- Replace ----------------
+
 // replaceAll replaces every occurrence of find with replacement across the
 // whole buffer as a single undo step.
 func (m *Model) replaceAll(find, replacement string) {
@@ -775,6 +793,8 @@ func (m *Model) replaceAll(find, replacement string) {
 	m.lastEditKind = editNone
 	m.status = fmt.Sprintf("replaced %d occurrence(s) of %q", count, find)
 }
+
+// ---------------- Save as ----------------
 
 // saveAs saves the buffer to path (resolved to an absolute path) and makes
 // it the buffer's filename, so a subsequent plain Ctrl+S writes there too.
@@ -803,6 +823,8 @@ func (m *Model) saveAs(path string) tea.Cmd {
 	}
 	return reloadGitStatusCmd(m.exp.Root.Path)
 }
+
+// ---------------- Comments ----------------
 
 // commentLineRange returns the (inclusive) line range Ctrl+/ should act
 // on: the active selection's lines if there is one, otherwise just the
@@ -922,6 +944,8 @@ func tabWidthOrDefault(w int) int {
 	return w
 }
 
+// ---------------- Explorer key handling ----------------
+
 func (m *Model) handleExplorerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyUp:
@@ -965,6 +989,8 @@ func (m *Model) handleExplorerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// ---------------- Terminal key handling ----------------
 
 func (m *Model) handleTerminalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.term.Running() {
@@ -1015,6 +1041,8 @@ func keyToPTYBytes(msg tea.KeyMsg) string {
 	return ""
 }
 
+// ---------------- Paint key handling ----------------
+
 func (m *Model) handlePaintKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cmd) {
 	switch {
 	case chord == "esc":
@@ -1034,6 +1062,8 @@ func (m *Model) handlePaintKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cmd
 	}
 	return m, nil
 }
+
+// ---------------- Mouse handling ----------------
 
 // editorOrigin returns the screen column/row where the editor pane's
 // content begins, so absolute mouse coordinates can be translated into

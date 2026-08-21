@@ -6,6 +6,8 @@ import (
 	"github.com/dayanez/Verti/pkg/complete"
 )
 
+// ---------------- Word Completion ----------------
+
 // tryWordCompletion handles Tab when there's no selection to indent or
 // replace: if the cursor sits right after a partial identifier, it
 // completes it from another occurrence already in the buffer (or cycles

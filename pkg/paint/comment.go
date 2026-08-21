@@ -2,6 +2,8 @@ package paint
 
 import "strings"
 
+// ---------------- Comment styles ----------------
+
 // CommentStyle describes how a language spells comments.
 type CommentStyle struct {
 	Line       string // e.g. "//"; empty if the language has no line-comment form
@@ -45,6 +47,8 @@ var commentStyles = map[string]CommentStyle{
 	"dockerfile": {Line: "#"},
 }
 
+// ---------------- Style lookup ----------------
+
 // StyleForFile returns the comment style for filename, checked first as an
 // exact (lowercased) filename -- so extension-less conventions like
 // "Dockerfile" resolve correctly -- then by extension, falling back to
@@ -66,6 +70,8 @@ func extOf(filename string) string {
 	}
 	return strings.ToLower(filename[i:])
 }
+
+// ---------------- Formatting ----------------
 
 // FormatComment wraps art (one string per row, as produced by
 // Canvas.Render) into a comment block appropriate for filename's language:

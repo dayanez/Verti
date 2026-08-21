@@ -14,6 +14,8 @@ import (
 	"github.com/dayanez/Verti/pkg/paint"
 )
 
+// ---------------- Top-level view ----------------
+
 func (m *Model) View() string {
 	if m.quitting || m.width <= 0 || m.height <= 0 {
 		return ""
@@ -95,6 +97,8 @@ func (m *Model) renderTop() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, sidebarContent, sep, editorContent)
 }
 
+// ---------------- Sidebar lists ----------------
+
 // renderScrollableList draws a title row followed by one row per item (of
 // count total, each rendered by rowText), the selected one reverse-styled,
 // scrolled to keep it visible, and padded to fill h rows. Shared by
@@ -152,6 +156,8 @@ func (m *Model) renderQuickOpenResults() string {
 	})
 }
 
+// ---------------- Help overlay ----------------
+
 // renderHelp draws the keybinding overlay: helpLines' content, scrolled
 // by helpScroll, filling the same width x height the editor+sidebar
 // normally occupy.
@@ -182,6 +188,8 @@ func (m *Model) renderHelp() string {
 	return strings.Join(rows, "\n")
 }
 
+// ---------------- Paint canvas ----------------
+
 // renderPaintCanvas draws the in-progress paint canvas as a standalone
 // drawing surface the size of the editor pane. Paint mode replaces the
 // editor's live view rather than alpha-blending onto styled text. See
@@ -208,6 +216,8 @@ func (m *Model) renderPaintCanvas() string {
 	rows[0] = padOrTruncate(" PAINT: drag to draw, Enter to insert as a comment, c to clear, Esc to cancel ", w)
 	return strings.Join(rows, "\n")
 }
+
+// ---------------- Terminal pane ----------------
 
 func (m *Model) renderTerminalPane() string {
 	if m.termWidth < 1 || m.termHeight < 1 {
@@ -310,6 +320,8 @@ func vtColor(c vt10x.Color, fallback lipgloss.Color) lipgloss.Color {
 	}
 }
 
+// ---------------- Status bar ----------------
+
 func (m *Model) renderStatusBar() string {
 	focusLabel := "EDITOR"
 	switch {
@@ -351,6 +363,8 @@ func (m *Model) renderStatusBar() string {
 	bar := left + strings.Repeat(" ", pad) + right
 	return lipgloss.NewStyle().Reverse(true).Width(m.width).Render(padOrTruncate(bar, m.width))
 }
+
+// ---------------- String helpers ----------------
 
 func runeLen(s string) int { return len([]rune(s)) }
 

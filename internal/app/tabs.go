@@ -10,6 +10,8 @@ import (
 	"github.com/dayanez/Verti/pkg/highlight"
 )
 
+// ---------------- Tab state ----------------
+
 // openBuffer holds one open file's editing state. Switching tabs snapshots
 // the Model's live buf/filename/undoStack/redoStack/lastEditKind/
 // lastEditTime/scroll fields into the outgoing tab's openBuffer, then
@@ -50,6 +52,8 @@ func highlighterFor(reg *highlight.Registry, filename string) highlight.Highligh
 	}
 	return h
 }
+
+// ---------------- Snapshot & restore ----------------
 
 // snapshotActiveTab copies the Model's live editing state into the active
 // tab's saved slot.
@@ -120,6 +124,8 @@ func (m *Model) prevTab() {
 	m.switchToTab((m.activeTab - 1 + len(m.tabs)) % len(m.tabs))
 }
 
+// ---------------- Opening tabs ----------------
+
 // newTab opens a fresh blank, untitled tab.
 func (m *Model) newTab() {
 	m.snapshotActiveTab()
@@ -157,6 +163,8 @@ func (m *Model) openFile(path string) bool {
 	m.status = "opened " + path
 	return true
 }
+
+// ---------------- Closing & quitting ----------------
 
 // closeActiveTab closes the current tab, confirming first (via
 // promptConfirmDiscard) if it has unsaved changes. Closing the last tab

@@ -19,6 +19,8 @@ import (
 	"github.com/dayanez/Verti/pkg/terminal"
 )
 
+// ---------------- Focus & prompt types ----------------
+
 // Focus identifies which pane currently receives non-global keystrokes.
 type Focus int
 
@@ -73,6 +75,8 @@ var promptLabels = map[promptKind]string{
 	promptNewFolder:   "New folder: ",
 	promptRename:      "Rename to: ",
 }
+
+// ---------------- Model ----------------
 
 type snapshot struct {
 	text   string
@@ -175,6 +179,8 @@ type Model struct {
 	quitting bool
 }
 
+// ---------------- Construction ----------------
+
 // New builds the editor's model. rootDir is the explorer's workspace
 // root; filePath (optional) is a file to open on startup.
 func New(rootDir, filePath string) (*Model, error) {
@@ -239,6 +245,8 @@ func New(rootDir, filePath string) (*Model, error) {
 	}
 	return m, nil
 }
+
+// ---------------- Bubbletea lifecycle ----------------
 
 func (m *Model) Init() tea.Cmd { return nil }
 
@@ -314,6 +322,8 @@ func (m *Model) appendTermOutput(data []byte) {
 	}
 }
 
+// ---------------- Layout ----------------
+
 // layout recomputes every pane's dimensions from the terminal window size,
 // matching VS Code's arrangement: the subshell pane spans the full width
 // at the bottom, with the sidebar and editor splitting the width above it.
@@ -376,6 +386,8 @@ func (m *Model) layout() {
 		_ = m.term.Resize(m.termWidth, m.termHeight)
 	}
 }
+
+// ---------------- Undo / redo ----------------
 
 // recordUndoBoundary snapshots the buffer before an edit if this edit
 // doesn't coalesce with the previous one (different kind, or too much

@@ -113,6 +113,8 @@ func (h *JSONHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token
 	return out, nil
 }
 
+// ---------------- Scan helpers ----------------
+
 func isJSONNumberByte(b byte) bool {
 	return (b >= '0' && b <= '9') || b == '.' || b == 'e' || b == 'E' || b == '+' || b == '-'
 }

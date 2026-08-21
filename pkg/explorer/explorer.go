@@ -25,6 +25,8 @@ var ErrNothingSelected = errors.New("explorer: nothing selected")
 
 const doubleEnterWindow = 500 * time.Millisecond
 
+// ---------------- Tree types & construction ----------------
+
 type node struct {
 	Name     string
 	Path     string
@@ -148,6 +150,8 @@ func (e *Explorer) rebuildFlat() {
 	}
 }
 
+// ---------------- Sizing & git status ----------------
+
 // SetSize sets the sidebar's rendered dimensions.
 func (e *Explorer) SetSize(w, h int) { e.Width, e.Height = w, h }
 
@@ -167,6 +171,8 @@ func (e *Explorer) ReloadGitStatus() { e.git = gitstatus.Load(e.Root.Path) }
 // take real time on a large or busy repo) without blocking to recompute
 // it here.
 func (e *Explorer) SetGitStatus(st *gitstatus.Status) { e.git = st }
+
+// ---------------- Selection & navigation ----------------
 
 // MoveDown moves the selection one row down.
 func (e *Explorer) MoveDown() {
@@ -287,6 +293,8 @@ func (e *Explorer) Selected() (path string, isDir bool, ok bool) {
 	entry := e.flat[e.cursor]
 	return entry.node.Path, entry.node.IsDir, true
 }
+
+// ---------------- Refresh, create, rename & delete ----------------
 
 // Refresh reloads the tree from disk, preserving which directories are
 // expanded and the current selection where possible.
@@ -423,6 +431,8 @@ func (e *Explorer) reloadRecursive(n *node) error {
 	}
 	return nil
 }
+
+// ---------------- Rendering ----------------
 
 func (e *Explorer) ensureVisible() {
 	visibleRows := e.Height - 1

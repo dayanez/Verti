@@ -8,6 +8,8 @@ import (
 	"github.com/dayanez/Verti/pkg/gitstatus"
 )
 
+// ---------------- Git Status Reload ----------------
+
 // gitStatusMsg carries a background git-status reload's result back into
 // Update once reloadGitStatusCmd's goroutine finishes.
 type gitStatusMsg struct{ status *gitstatus.Status }
@@ -22,6 +24,8 @@ func reloadGitStatusCmd(root string) tea.Cmd {
 		return gitStatusMsg{status: gitstatus.Load(root)}
 	}
 }
+
+// ---------------- File & Folder Create / Rename / Delete ----------------
 
 // createExplorerFile creates name inside the explorer's current target
 // directory (see explorer.TargetDir) and reports the result on the

@@ -7,6 +7,8 @@ package highlight
 
 import "strings"
 
+// ---------------- Token model ----------------
+
 // Kind is a semantic token category. The display package owns the actual
 // colors; this package only classifies.
 type Kind string
@@ -48,6 +50,8 @@ type Token struct {
 type Highlighter interface {
 	Highlight(src []byte, viewStart, viewEnd int) ([]Token, error)
 }
+
+// ---------------- Registry ----------------
 
 // Registry resolves a Highlighter constructor by file extension (including
 // the leading dot, e.g. ".go"). Unlike a typical registry it does not

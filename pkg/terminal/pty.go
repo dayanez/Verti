@@ -17,6 +17,8 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
+// ---------------- Manager ----------------
+
 var (
 	ErrNotRunning     = errors.New("terminal: not running")
 	ErrAlreadyRunning = errors.New("terminal: already running")
@@ -33,6 +35,8 @@ type Manager struct {
 
 // New returns a Manager with no subshell started yet.
 func New() *Manager { return &Manager{} }
+
+// ---------------- Starting the subshell ----------------
 
 // Start spawns the user's default shell attached to a new PTY sized
 // cols x rows (a size of 0,0 skips the initial resize).
@@ -79,6 +83,8 @@ func defaultShell() string {
 	}
 	return "/bin/sh"
 }
+
+// ---------------- I/O ----------------
 
 // Read reads subshell output. It blocks like a normal PTY read; callers
 // driving a UI loop should run it in its own goroutine.
@@ -130,6 +136,8 @@ func (m *Manager) acquire() (pty.Pty, bool) {
 	return m.pty, true
 }
 
+// ---------------- Virtual terminal state ----------------
+
 // Feed writes PTY output bytes into the virtual terminal, updating its
 // screen state (cursor, cell grid, alt-screen mode, ...). Call this with
 // whatever Read returns; it's a no-op if no subshell is running.
@@ -154,6 +162,8 @@ func (m *Manager) Running() bool {
 	defer m.mu.Unlock()
 	return m.pty != nil
 }
+
+// ---------------- Shutdown ----------------
 
 // Close terminates the subshell and releases the PTY. It is safe to call
 // even if no subshell is running.

@@ -10,6 +10,8 @@ import (
 	"github.com/dayanez/Verti/pkg/search"
 )
 
+// ---------------- Loading the File List ----------------
+
 // maxQuickOpenResults caps how many fuzzy matches are kept and shown, so
 // a short, common query against a huge project doesn't produce an
 // unusable, unbounded list.
@@ -53,6 +55,8 @@ func (m *Model) applyQuickOpenFiles(msg quickOpenFilesMsg) {
 	m.status = "ready"
 	m.refilterQuickOpen()
 }
+
+// ---------------- Fuzzy Filtering ----------------
 
 // refilterQuickOpen re-runs the current prompt text against the loaded
 // file list. Called after every keystroke in the quick-open prompt, not
@@ -124,6 +128,8 @@ func fuzzyScore(candidate, query string) (score int, ok bool) {
 	span := last - first + 1
 	return first*2 + span + len(c), true
 }
+
+// ---------------- Selection & Opening ----------------
 
 // moveQuickOpenSelection moves the highlighted result by delta, clamped
 // to the current result list.
