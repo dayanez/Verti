@@ -19,11 +19,18 @@ telemetry: just a keyboard-driven editor for getting work done.
 - ASCII box-drawing paint overlay (`Ctrl+P`) for dropping diagrams into
   comments.
 
-## Build
+## Install
 
-Requires Go 1.25+ and a cgo-capable C compiler. [Zig](https://ziglang.org/)
-works well as a lightweight one on any OS (`zig cc`); `gcc`/`clang`/MSVC
-work too.
+Two ways to get Verti:
+
+**Download a release.** Grab the binary for your OS from the
+[releases page](https://github.com/dayanez/Verti/releases/latest), covering
+Linux (amd64/arm64), macOS (amd64/arm64), and Windows (amd64). Put it
+somewhere on your `PATH` and run `verti`.
+
+**Or build from source.** Requires Go 1.25+ and a cgo-capable C compiler.
+[Zig](https://ziglang.org/) works well as a lightweight one on any OS
+(`zig cc`); `gcc`/`clang`/MSVC work too.
 
 ```sh
 git clone https://github.com/dayanez/Verti
