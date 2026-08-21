@@ -19,9 +19,10 @@ jobs:
             goarch: arm64
             cross_cc: aarch64-linux-gnu-gcc
             cross_cxx: aarch64-linux-gnu-g++
-          - os: macos-13
+          - os: macos-latest
             goos: darwin
             goarch: amd64
+            mac_arch: x86_64
           - os: macos-latest
             goos: darwin
             goarch: arm64
@@ -67,6 +68,10 @@ jobs:
           if [ -n "${{ matrix.cross_cc }}" ]; then
             export CC="${{ matrix.cross_cc }}"
             export CXX="${{ matrix.cross_cxx }}"
+          fi
+          if [ -n "${{ matrix.mac_arch }}" ]; then
+            export CC="clang -arch ${{ matrix.mac_arch }}"
+            export CXX="clang++ -arch ${{ matrix.mac_arch }}"
           fi
           if [ "${{ matrix.goos }}" = "windows" ]; then
             EXT=".exe"
