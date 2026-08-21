@@ -43,10 +43,13 @@ jobs:
         if: matrix.cross_cc
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - uses: mlugg/setup-zig@v1
+      - name: Install zig
         if: matrix.use_zig
-        with:
-          version: 0.16.0
+        shell: bash
+        run: |
+          curl -fsSL -o zig.zip https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
+          unzip -q zig.zip
+          echo "$PWD/zig-x86_64-windows-0.16.0" >> "$GITHUB_PATH"
 
       - name: Build
         shell: bash
