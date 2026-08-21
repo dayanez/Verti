@@ -45,23 +45,7 @@ verti                 # open the current directory
 verti path/to/file.go # open a file
 verti path/to/dir     # open a specific directory
 ```
-
-| Chord | Action |
-|---|---|
-| `Ctrl+B` | Toggle the file explorer |
-| `Ctrl+J` | Toggle the embedded shell |
-| `Ctrl+P` | Toggle the paint overlay |
-| `Ctrl+S` / `Ctrl+O` | Save / Save As |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
-| `Ctrl+F` / `Ctrl+R` | Find / replace all |
-| `Ctrl+G` | Go to line |
-| `Ctrl+D` / `Ctrl+K` | Duplicate / delete line |
-| `Ctrl+/` | Toggle comment |
-| `Ctrl+Q` | Quit |
-| `Tab` / `Shift+Tab` | Indent / outdent |
-
-All rebindable from `init.lua`. Full keymap: `F1` inside the editor.
+All KeyBinds rebindable from `init.lua`. Full keymap: `F1` inside the editor.
 
 ## Config
 
