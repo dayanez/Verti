@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeScript(t *testing.T, contents string) string {
@@ -48,6 +49,30 @@ this_is_not_valid_lua((()
 	}
 	if cfg == nil {
 		t.Fatal("expected a non-nil Config even on error")
+	}
+}
+
+func TestLoadConfigInterruptsAnInfiniteLoop(t *testing.T) {
+	old := loadTimeout
+	loadTimeout = 50 * time.Millisecond
+	defer func() { loadTimeout = old }()
+
+	path := writeScript(t, `while true do end`)
+
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, err = LoadConfig(path)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if err == nil {
+			t.Fatal("LoadConfig() error = nil for an infinite loop, want a timeout error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadConfig() did not return after loadTimeout elapsed: an init.lua infinite loop would hang the editor forever")
 	}
 }
 

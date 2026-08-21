@@ -149,6 +149,7 @@ type Model struct {
 	prompt          promptKind
 	promptText      string
 	pendingCloseTab bool
+	pendingQuit     bool
 	replaceFindTerm string
 
 	// tabs holds every open file's editing state; activeTab indexes the
@@ -282,10 +283,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.term.Feed(msg.data)
 		return m, readTermCmd(m.term)
 	case termClosedMsg:
+		// The subshell exited on its own (e.g. the user typed "exit"), so
+		// Read already failed and there's nothing left to read from. Close
+		// releases the pty and clears Running(), so the next Ctrl+J starts
+		// a fresh subshell instead of finding one it thinks is still alive.
+		_ = m.term.Close()
 		m.termVisible = false
 		if m.focus == FocusTerminal {
 			m.focus = FocusEditor
 		}
+		m.layout()
 		return m, nil
 	case fileSearchResultMsg:
 		m.applyFileSearchResult(msg)

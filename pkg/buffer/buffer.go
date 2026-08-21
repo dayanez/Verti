@@ -127,12 +127,20 @@ func (gb *GapBuffer) SaveFile(path string) error {
 	text := gb.stringLocked()
 	crlf := gb.crlf
 	perm := gb.perm
-	gb.dirty = false
+	savedVersion := gb.version
 	gb.mu.Unlock()
 	if crlf {
 		text = strings.ReplaceAll(text, "\n", "\r\n")
 	}
-	return os.WriteFile(path, []byte(text), perm)
+	if err := os.WriteFile(path, []byte(text), perm); err != nil {
+		return err
+	}
+	gb.mu.Lock()
+	if gb.version == savedVersion {
+		gb.dirty = false
+	}
+	gb.mu.Unlock()
+	return nil
 }
 
 // Dirty reports whether the buffer has unsaved changes.

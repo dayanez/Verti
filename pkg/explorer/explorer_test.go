@@ -40,6 +40,32 @@ func TestNewLoadsTopLevelSortedDirsFirst(t *testing.T) {
 	}
 }
 
+func TestSymlinkedDirectoryIsBrowsableNotAPlainFile(t *testing.T) {
+	root := mkTestTree(t)
+	target := filepath.Join(root, "src")
+	link := filepath.Join(root, "shared")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("os.Symlink unavailable in this environment: %v", err)
+	}
+
+	e, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *node
+	for _, ve := range e.flat {
+		if ve.node.Name == "shared" {
+			got = ve.node
+		}
+	}
+	if got == nil {
+		t.Fatal("no \"shared\" entry found in the tree")
+	}
+	if !got.IsDir {
+		t.Error("IsDir = false for a symlink to a directory, want true: it should be browsable, not opened as a plain file")
+	}
+}
+
 func TestToggleExpandsAndCollapses(t *testing.T) {
 	root := mkTestTree(t)
 	e, err := New(root)

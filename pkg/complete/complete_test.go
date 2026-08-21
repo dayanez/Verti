@@ -49,6 +49,19 @@ func TestCandidatesExcludesTheOccurrenceBeingTyped(t *testing.T) {
 	}
 }
 
+func TestCandidatesExcludesTheOccurrenceBeingTypedMidWord(t *testing.T) {
+	text := []rune("word")
+	// Cursor sits between "wo" and "rd" (offset 2), so prefix "wo" is
+	// typed mid-word: prefixStart=0, prefixEnd=2, but the identifier run
+	// containing the cursor extends to 4, past prefixEnd. The run must
+	// still be excluded -- offering "word" here as a completion of "wo"
+	// would corrupt the buffer into "wordrd" if accepted.
+	got := Candidates(text, "wo", 0, 2)
+	if got != nil {
+		t.Fatalf("Candidates() = %v, want nil (the word under the cursor must never complete into itself)", got)
+	}
+}
+
 func TestCandidatesDedupesRepeatedWords(t *testing.T) {
 	text := []rune("value value value val")
 	got := Candidates(text, "val", 19, 22)

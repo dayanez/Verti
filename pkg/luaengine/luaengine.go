@@ -7,11 +7,22 @@
 package luaengine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+// loadTimeout bounds how long init.lua is allowed to run. It's evaluated
+// synchronously on startup, before the UI ever renders, so a config script
+// with an accidental infinite loop (a typo'd loop condition, say) would
+// otherwise hang the editor forever with no error and no way to tell it's
+// the config file's fault, rather than the editor itself, that's stuck.
+// A var, not a const, so tests can shrink it instead of spending real
+// wall-clock seconds proving a hung script actually gets interrupted.
+var loadTimeout = 5 * time.Second
 
 // Config is the result of evaluating an init.lua script.
 type Config struct {
@@ -57,6 +68,10 @@ func LoadConfig(path string) (*Config, error) {
 
 	L := lua.NewState()
 	defer L.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+	L.SetContext(ctx)
 
 	vertiTable := L.NewTable()
 	L.SetGlobal("verti", vertiTable)

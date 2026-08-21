@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/dayanez/Verti/pkg/buffer"
 	"github.com/dayanez/Verti/pkg/highlight"
 )
@@ -131,23 +133,29 @@ func (m *Model) newTab() {
 // instead of opening a duplicate if it's already open. Since opening a
 // file always adds or switches to a tab rather than replacing the current
 // one, there's no risk of silently discarding unsaved changes here (that
-// risk now lives in closeActiveTab instead).
-func (m *Model) openFile(path string) {
+// risk now lives in closeActiveTab instead). It reports whether the
+// active tab actually ends up backed by path, so a caller that goes on to
+// act on m.buf (jumpToSearchResult moving the cursor to a match, for
+// instance) can tell a real failure -- the file couldn't be read -- apart
+// from success, rather than blindly acting on whatever tab was already
+// active before the call.
+func (m *Model) openFile(path string) bool {
 	if i := m.findTab(path); i >= 0 {
 		m.switchToTab(i)
 		m.status = "switched to " + path
-		return
+		return true
 	}
 	buf, err := buffer.LoadFile(path)
 	if err != nil {
 		m.status = "open failed: " + err.Error()
-		return
+		return false
 	}
 	m.snapshotActiveTab()
 	m.tabs = append(m.tabs, &openBuffer{buf: buf, filename: path, highlighter: highlighterFor(m.highlighter, path)})
 	m.restoreTab(len(m.tabs) - 1)
 	m.layout()
 	m.status = "opened " + path
+	return true
 }
 
 // closeActiveTab closes the current tab, confirming first (via
@@ -161,6 +169,35 @@ func (m *Model) closeActiveTab() {
 		return
 	}
 	m.reallyCloseActiveTab()
+}
+
+// requestQuit quits, confirming first (via promptConfirmDiscard, like
+// closeActiveTab) if any open tab has unsaved changes -- not just the
+// active one, since Ctrl+Q discards every tab at once.
+func (m *Model) requestQuit() (tea.Model, tea.Cmd) {
+	if m.anyTabDirty() {
+		m.prompt = promptConfirmDiscard
+		m.pendingQuit = true
+		m.status = "unsaved changes -- quit without saving? (y/n)"
+		return m, nil
+	}
+	return m.doQuit()
+}
+
+func (m *Model) doQuit() (tea.Model, tea.Cmd) {
+	m.saveSession()
+	m.quitting = true
+	_ = m.Close()
+	return m, tea.Quit
+}
+
+func (m *Model) anyTabDirty() bool {
+	for _, t := range m.tabs {
+		if t.buf.Dirty() {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) reallyCloseActiveTab() {

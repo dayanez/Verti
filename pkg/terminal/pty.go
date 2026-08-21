@@ -185,6 +185,9 @@ func (m *Manager) Close() error {
 
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
+		// Reap it: Kill alone leaves a zombie process-table entry behind
+		// on Unix until something calls wait(2) on it.
+		_ = cmd.Wait()
 	}
 	err := p.Close()
 	m.wg.Wait()

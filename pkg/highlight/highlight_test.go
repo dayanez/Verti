@@ -87,6 +87,38 @@ func TestJSONHighlighting(t *testing.T) {
 	findKind(t, tokens, src, "true", KindConstant)
 }
 
+func TestJSONHighlightCachesUnchangedSource(t *testing.T) {
+	h := NewJSONHighlighter()
+	src1 := []byte(`{"a": 1}`)
+	first, err := h.Highlight(src1, 0, len(src1))
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+
+	// A distinct byte slice with identical content -- the same way
+	// View() passes a freshly allocated []byte(gb.String()) every frame
+	// even when the buffer itself hasn't changed.
+	src2 := []byte(`{"a": 1}`)
+	second, err := h.Highlight(src2, 0, len(src2))
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+	if len(first) == 0 || &first[0] != &second[0] {
+		t.Fatal("Highlight() rescanned unchanged source instead of returning the cached result")
+	}
+
+	// A real edit must still invalidate the cache.
+	src3 := []byte(`{"a": 2}`)
+	third, err := h.Highlight(src3, 0, len(src3))
+	if err != nil {
+		t.Fatalf("Highlight() error: %v", err)
+	}
+	findKind(t, third, src3, "2", KindNumber)
+	if len(third) == 0 || &third[0] == &first[0] {
+		t.Fatal("Highlight() returned the stale cached result after the source changed")
+	}
+}
+
 func TestBashHighlighting(t *testing.T) {
 	src := []byte("#!/bin/bash\nif [ -f \"$1\" ]; then\n  echo \"found\"\nfi\n")
 	r := NewRegistry()

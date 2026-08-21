@@ -29,9 +29,11 @@ func PrefixStart(text []rune, offset int) int {
 
 // Candidates returns every distinct identifier in text that starts with
 // prefix and is strictly longer than it (so a word equal to prefix itself
-// is never offered as its own completion), excluding the occurrence at
-// [prefixStart, prefixEnd) -- the word currently being typed -- ordered
-// by first appearance in text.
+// is never offered as its own completion), excluding the word currently
+// being typed -- the identifier run starting at prefixStart, regardless of
+// how far past prefixEnd (the cursor) it extends, since completing mid-word
+// must not offer the very word the cursor sits inside as a candidate for
+// itself -- ordered by first appearance in text.
 func Candidates(text []rune, prefix string, prefixStart, prefixEnd int) []string {
 	if prefix == "" {
 		return nil
@@ -49,7 +51,7 @@ func Candidates(text []rune, prefix string, prefixStart, prefixEnd int) []string
 		for i < len(text) && IsWordRune(text[i]) {
 			i++
 		}
-		if start == prefixStart && i == prefixEnd {
+		if start == prefixStart {
 			continue // the occurrence currently being typed
 		}
 		if i-start <= len(pr) || !hasPrefix(text[start:i], pr) {

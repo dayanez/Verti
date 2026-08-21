@@ -95,15 +95,35 @@ func (e *Explorer) loadChildren(n *node) error {
 			continue
 		}
 		entPath := filepath.Join(n.Path, ent.Name())
-		if e.ignore.Match(ignore.RelSlash(e.Root.Path, entPath), ent.IsDir()) {
+		isDir := entryIsDir(entPath, ent)
+		if e.ignore.Match(ignore.RelSlash(e.Root.Path, entPath), isDir) {
 			continue
 		}
 		n.Children = append(n.Children, &node{
-			Name: ent.Name(), Path: entPath, IsDir: ent.IsDir(), parent: n,
+			Name: ent.Name(), Path: entPath, IsDir: isDir, parent: n,
 		})
 	}
 	n.loaded = true
 	return nil
+}
+
+// entryIsDir reports whether path should be browsable as a directory.
+// ent.IsDir() reflects the directory entry's own type, so a symlink to a
+// directory reports false -- it's a symlink, not a directory -- which
+// would otherwise show it as a plain file the explorer tries to open as
+// text instead of a folder it can descend into. Following the link with
+// Stat gives the target's real type; a dangling or permission-denied link
+// falls back to being treated as a plain (non-directory) entry rather than
+// failing the whole listing.
+func entryIsDir(path string, ent os.DirEntry) bool {
+	if ent.Type()&os.ModeSymlink == 0 {
+		return ent.IsDir()
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 func (e *Explorer) rebuildFlat() {

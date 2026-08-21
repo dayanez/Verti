@@ -1,19 +1,34 @@
 package highlight
 
+import "bytes"
+
 // JSONHighlighter is a small hand-written tokenizer for JSON. It exists
 // because tree-sitter-json has no bundled Go grammar package alongside the
 // other languages here; JSON's structure is simple enough that a direct
 // scan is both accurate and far less code than vendoring a grammar. It
 // satisfies the same Highlighter interface as the tree-sitter-backed
 // implementations, so callers never need to know the difference.
-type JSONHighlighter struct{}
+type JSONHighlighter struct {
+	prevSrc    []byte
+	prevResult []Token
+}
 
 func NewJSONHighlighter() *JSONHighlighter { return &JSONHighlighter{} }
 
 // Highlight ignores viewStart/viewEnd and always tokenizes the whole
 // file: JSON files are rarely huge, and this is a single cheap linear
 // scan rather than a tree-sitter parse, so there's nothing worth limiting.
-func (JSONHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, error) {
+// If src is unchanged since the last call, it returns the cached result
+// without rescanning at all -- the same cheap-insurance idiom the
+// tree-sitter-backed highlighters use (see incrementalParser.parse) --
+// since View() re-renders, and therefore re-highlights, on every frame,
+// including ones triggered by something unrelated to this buffer (cursor
+// movement, terminal output streaming in a different pane, ...).
+func (h *JSONHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, error) {
+	if bytes.Equal(h.prevSrc, src) {
+		return h.prevResult, nil
+	}
+
 	var out []Token
 	i := 0
 	n := len(src)
@@ -93,6 +108,8 @@ func (JSONHighlighter) Highlight(src []byte, viewStart, viewEnd int) ([]Token, e
 			i++
 		}
 	}
+	h.prevSrc = append(h.prevSrc[:0], src...)
+	h.prevResult = out
 	return out, nil
 }
 

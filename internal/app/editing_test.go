@@ -285,6 +285,79 @@ func TestCloseTabWithoutUnsavedChangesClosesImmediately(t *testing.T) {
 	}
 }
 
+func TestQuitWithUnsavedChangesAsksToConfirm(t *testing.T) {
+	m := newTestModel(t, "hello")
+	sendKeys(m, runes("X"))
+	if !m.buf.Dirty() {
+		t.Fatal("buffer should be dirty after an edit")
+	}
+
+	sendKeys(m, key(tea.KeyCtrlQ))
+	if m.prompt != promptConfirmDiscard {
+		t.Fatalf("prompt = %v, want promptConfirmDiscard", m.prompt)
+	}
+	if m.quitting {
+		t.Fatal("quitting = true before confirmation, want false")
+	}
+
+	// 'n' cancels: the app keeps running.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if m.prompt != promptNone {
+		t.Fatalf("prompt = %v after 'n', want promptNone", m.prompt)
+	}
+	if m.quitting {
+		t.Fatal("quitting = true after canceling quit, want false")
+	}
+
+	// Retry and confirm with 'y'.
+	sendKeys(m, key(tea.KeyCtrlQ))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !m.quitting {
+		t.Fatal("quitting = false after confirming quit, want true")
+	}
+	if cmd == nil {
+		t.Fatal("Update after confirming quit returned a nil cmd, want tea.Quit")
+	}
+}
+
+func TestQuitWithNoUnsavedChangesQuitsImmediately(t *testing.T) {
+	m := newTestModel(t, "hello")
+
+	_, cmd := m.Update(key(tea.KeyCtrlQ))
+	if m.prompt != promptNone {
+		t.Fatalf("prompt = %v, want promptNone (no unsaved changes, no confirmation needed)", m.prompt)
+	}
+	if !m.quitting {
+		t.Fatal("quitting = false, want true")
+	}
+	if cmd == nil {
+		t.Fatal("Update returned a nil cmd, want tea.Quit")
+	}
+}
+
+func TestQuitChecksEveryTabNotJustTheActiveOne(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other.txt")
+	if err := os.WriteFile(other, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	m := newTestModel(t, "hello")
+	sendKeys(m, runes("X")) // dirty tab 0, still active
+	m.openFile(other)       // tab 1 is now active and clean
+	if m.buf.Dirty() {
+		t.Fatal("tab 1 (other.txt) should not be dirty")
+	}
+
+	sendKeys(m, key(tea.KeyCtrlQ))
+	if m.prompt != promptConfirmDiscard {
+		t.Fatalf("prompt = %v, want promptConfirmDiscard: tab 0 is still dirty in the background", m.prompt)
+	}
+	if m.quitting {
+		t.Fatal("quitting = true with a dirty background tab and no confirmation yet, want false")
+	}
+}
+
 func TestTabSwitchingIsolatesUndoHistory(t *testing.T) {
 	m := newTestModel(t, "hello")
 	sendKeys(m, runes("A")) // tab 0 buffer: "Ahello"

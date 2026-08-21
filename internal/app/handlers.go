@@ -48,7 +48,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// not quit the editor). Only Esc and the terminal-toggle chord itself
 	// escape back out; everything else is forwarded.
 	if m.focus == FocusTerminal {
-		if chord == "esc" {
+		vt := m.term.Screen()
+		inAltScreen := vt != nil && vtInAltScreen(vt)
+		if chord == "esc" && !inAltScreen {
 			m.focus = FocusEditor
 			// Leaving the shell is a natural moment to resync: this is
 			// where someone is most likely to have just run `git
@@ -93,6 +95,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 	case "toggle_terminal":
 		m.termVisible = !m.termVisible
 		if !m.termVisible {
+			m.layout()
 			if m.focus == FocusTerminal {
 				m.focus = FocusEditor
 				return m, reloadGitStatusCmd(m.exp.Root.Path)
@@ -228,10 +231,7 @@ func (m *Model) dispatchGlobal(name string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "quit":
-		m.saveSession()
-		m.quitting = true
-		_ = m.Close()
-		return m, tea.Quit
+		return m.requestQuit()
 	}
 	return m, nil
 }
@@ -457,14 +457,23 @@ func (m *Model) closePrompt() {
 // other key routing.
 func (m *Model) handlePromptKey(msg tea.KeyMsg, chord string) (tea.Model, tea.Cmd) {
 	if m.prompt == promptConfirmDiscard {
+		quit := m.pendingQuit
+		m.pendingCloseTab = false
+		m.pendingQuit = false
+		m.prompt = promptNone
 		switch chord {
 		case "y", "Y":
+			if quit {
+				return m.doQuit()
+			}
 			m.reallyCloseActiveTab()
 		case "n", "N", "esc":
-			m.status = "close canceled"
+			if quit {
+				m.status = "quit canceled"
+			} else {
+				m.status = "close canceled"
+			}
 		}
-		m.pendingCloseTab = false
-		m.prompt = promptNone
 		return m, nil
 	}
 
@@ -989,10 +998,19 @@ func keyToPTYBytes(msg tea.KeyMsg) string {
 		return "\x1b[C"
 	case tea.KeyLeft:
 		return "\x1b[D"
-	case tea.KeyCtrlC:
-		return "\x03"
-	case tea.KeyCtrlD:
-		return "\x04"
+	}
+	// Every other C0 control code -- Ctrl+A through Ctrl+Z and a handful
+	// of punctuation chords, 1-31 -- is a real ASCII control byte in
+	// bubbletea's KeyType encoding (KeyCtrlA == 1, KeyCtrlB == 2, ...,
+	// KeyEsc == 27, ...), not just the handful Verti happens to special-
+	// case above. A real terminal forwards all of them verbatim and lets
+	// the shell or program decide what they mean: readline bindings like
+	// Ctrl+A/E/U/K/W, Ctrl+L to clear the screen, Ctrl+Z to suspend, Esc
+	// to a full-screen program mid-alt-screen, and so on. Anything left
+	// in that range at this point must be sent as-is rather than
+	// silently dropped.
+	if msg.Type >= 1 && msg.Type <= 31 {
+		return string(byte(msg.Type))
 	}
 	return ""
 }

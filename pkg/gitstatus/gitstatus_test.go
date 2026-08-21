@@ -116,6 +116,55 @@ func TestLoadDetectsDeletedFile(t *testing.T) {
 	}
 }
 
+func TestLoadOnSubdirectoryOfALargerRepoUsesSubdirRelativePaths(t *testing.T) {
+	repo := initRepo(t)
+	sub := filepath.Join(repo, "sub")
+	mustWrite(t, filepath.Join(sub, "tracked.txt"), "original\n")
+	run(t, repo, "add", "sub/tracked.txt")
+	run(t, repo, "commit", "-q", "-m", "initial")
+
+	mustWrite(t, filepath.Join(sub, "tracked.txt"), "changed\n")
+	mustWrite(t, filepath.Join(sub, "new.txt"), "hello\n")
+
+	// Load is pointed at the subdirectory, not the repo root: `git status
+	// --porcelain` always reports paths relative to the repo's top level
+	// regardless of `-C`, so without stripping that prefix these would
+	// show up as "sub/tracked.txt" and "sub/new.txt" instead of matching
+	// the subdir-relative paths callers (the explorer) actually look up.
+	st := Load(sub)
+	if code, ok := st.Dirty["tracked.txt"]; !ok || code != 'M' {
+		t.Errorf("Dirty[tracked.txt] = %q, ok=%v, want 'M'; Dirty = %v", code, ok, st.Dirty)
+	}
+	if code, ok := st.Dirty["new.txt"]; !ok || code != '?' {
+		t.Errorf("Dirty[new.txt] = %q, ok=%v, want '?'; Dirty = %v", code, ok, st.Dirty)
+	}
+}
+
+func TestUnquoteGitPathReversesOctalAndBackslashEscapes(t *testing.T) {
+	cases := map[string]string{
+		`plain.txt`:         "plain.txt",
+		`"caf\303\251.txt"`: "café.txt",
+		`"a\\b.txt"`:        `a\b.txt`,
+		`"quote\".txt"`:     `quote".txt`,
+		`"tab\there.txt"`:   "tab\there.txt",
+	}
+	for in, want := range cases {
+		if got := unquoteGitPath(in); got != want {
+			t.Errorf("unquoteGitPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLoadUnescapesNonASCIIFilenames(t *testing.T) {
+	dir := initRepo(t)
+	mustWrite(t, filepath.Join(dir, "café.txt"), "hello\n")
+
+	st := Load(dir)
+	if code, ok := st.Dirty["café.txt"]; !ok || code != '?' {
+		t.Errorf("Dirty[café.txt] = %q, ok=%v, want '?'; Dirty = %v", code, ok, st.Dirty)
+	}
+}
+
 func TestLoadCleanRepoHasNothingDirty(t *testing.T) {
 	dir := initRepo(t)
 	mustWrite(t, filepath.Join(dir, "clean.txt"), "x\n")

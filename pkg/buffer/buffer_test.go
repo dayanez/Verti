@@ -370,6 +370,24 @@ func TestSaveFileRecreatesWithOriginalPermissionsIfFileWasRemoved(t *testing.T) 
 	}
 }
 
+func TestSaveFileFailureLeavesBufferDirty(t *testing.T) {
+	gb := NewFromString("hello")
+	gb.InsertString(" world")
+	if !gb.Dirty() {
+		t.Fatal("Dirty() = false after an edit, want true")
+	}
+
+	// The parent directory doesn't exist, so os.WriteFile is guaranteed to
+	// fail without ever touching disk.
+	badPath := filepath.Join(t.TempDir(), "missing-dir", "file.txt")
+	if err := gb.SaveFile(badPath); err == nil {
+		t.Fatal("SaveFile() with a nonexistent parent directory returned nil error, want an error")
+	}
+	if !gb.Dirty() {
+		t.Error("Dirty() = false after a failed SaveFile, want true: a failed save must not silently discard the unsaved-changes indicator")
+	}
+}
+
 func TestNewFromStringAndLoadFileStartNotDirty(t *testing.T) {
 	if NewFromString("hello").Dirty() {
 		t.Error("NewFromString(...).Dirty() = true, want false: loading content is construction, not an edit")

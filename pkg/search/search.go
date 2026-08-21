@@ -85,7 +85,13 @@ func Files(root, substr string) ([]Match, error) {
 		}
 
 		scanner := bufio.NewScanner(bytes.NewReader(data))
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		// The scanner's max token size must be at least maxFileSize: a
+		// single line can be as long as the whole file (no newlines at
+		// all), and data is already capped there by the size check above.
+		// A smaller cap here would make the scanner hit bufio.ErrTooLong
+		// on a file that already passed that check, silently truncating
+		// results partway through with no indication anything was missed.
+		scanner.Buffer(make([]byte, 0, 64*1024), maxFileSize)
 		line := 0
 		for scanner.Scan() {
 			line++

@@ -89,7 +89,9 @@ func (m *Model) jumpToSearchResult(i int) {
 	}
 	r := m.searchResults[i]
 	abs := filepath.Join(m.exp.Root.Path, r.Path)
-	m.openFile(abs)
+	if !m.openFile(abs) {
+		return
+	}
 	m.buf.ClearSelection()
 	m.buf.MoveCursorTo(m.buf.LineOffset(r.Line - 1))
 	m.searchResultsActive = false

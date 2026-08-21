@@ -96,6 +96,26 @@ func TestFilesSkipsOversizedFiles(t *testing.T) {
 	}
 }
 
+func TestFilesFindsMatchOnAnOverlongSingleLine(t *testing.T) {
+	dir := t.TempDir()
+	// One line with no newline at all, under maxFileSize but over the
+	// scanner's old 1MB token cap: the scanner's max token size must
+	// track maxFileSize, since a line can be as long as the whole file.
+	line := bytes.Repeat([]byte("x"), maxFileSize-100)
+	line = append(line, []byte("needle")...)
+	if err := os.WriteFile(filepath.Join(dir, "long.txt"), line, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	matches, err := Files(dir, "needle")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1: a match on an overlong single line must not be silently dropped", len(matches))
+	}
+}
+
 func TestFilesSkipsGitignoredDirectories(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".gitignore"), "node_modules/\n")
