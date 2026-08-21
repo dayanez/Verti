@@ -158,6 +158,13 @@ func (gb *GapBuffer) Dirty() bool {
 	return gb.dirty
 }
 
+// CRLF reports whether this buffer's file used CRLF line endings on load.
+func (gb *GapBuffer) CRLF() bool {
+	gb.mu.RLock()
+	defer gb.mu.RUnlock()
+	return gb.crlf
+}
+
 // Len returns the number of runes of actual text (excluding the gap).
 func (gb *GapBuffer) Len() int {
 	gb.mu.RLock()

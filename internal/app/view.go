@@ -353,7 +353,11 @@ func (m *Model) renderStatusBar() string {
 	if b := m.exp.Branch(); b != "" {
 		branch = b + "  "
 	}
-	right := fmt.Sprintf("%s%s  Ln %d, Col %d ", branch, focusLabel, line+1, col+1)
+	eol := "LF"
+	if m.buf.CRLF() {
+		eol = "CRLF"
+	}
+	right := fmt.Sprintf("%s%s  %s  Ln %d, Col %d ", branch, focusLabel, eol, line+1, col+1)
 
 	pad := m.width - runeLen(left) - runeLen(right)
 	if pad < 1 {

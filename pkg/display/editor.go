@@ -449,7 +449,7 @@ func (e *Editor) renderLine(line string, lineStart int, tokens []highlight.Token
 		isSelected := selFrom >= 0 && j >= selFrom && j < selTo
 
 		w := cellWidth(r, visCol, tabWidth)
-		if visCol+w <= e.ScrollCol {
+		if visCol < e.ScrollCol {
 			visCol += w
 			byteOff += rl
 			continue
